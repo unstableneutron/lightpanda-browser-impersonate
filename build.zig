@@ -29,6 +29,7 @@ pub fn build(b: *Build) !void {
 
     const git_commit = b.option([]const u8, "git_commit", "Current git commit");
     const prebuilt_v8_path = b.option([]const u8, "prebuilt_v8_path", "Path to prebuilt libc_v8.a");
+    const use_curl_impersonate = b.option(bool, "use_curl_impersonate", "Use pre-built curl-impersonate for TLS fingerprinting") orelse false;
 
     var opts = b.addOptions();
     opts.addOption([]const u8, "version", manifest.version);
@@ -44,7 +45,7 @@ pub fn build(b: *Build) !void {
         .link_libc = true,
         .link_libcpp = true,
     });
-    try addDependencies(b, lightpanda_module, opts, prebuilt_v8_path);
+    try addDependencies(b, lightpanda_module, opts, prebuilt_v8_path, use_curl_impersonate);
 
     {
         // browser
@@ -98,7 +99,7 @@ pub fn build(b: *Build) !void {
             .target = target,
             .optimize = optimize,
         });
-        try addDependencies(b, wpt_module, opts, prebuilt_v8_path);
+        try addDependencies(b, wpt_module, opts, prebuilt_v8_path, use_curl_impersonate);
 
         // compile and install
         const wpt = b.addExecutable(.{
@@ -118,7 +119,7 @@ pub fn build(b: *Build) !void {
     }
 }
 
-fn addDependencies(b: *Build, mod: *Build.Module, opts: *Build.Step.Options, prebuilt_v8_path: ?[]const u8) !void {
+fn addDependencies(b: *Build, mod: *Build.Module, opts: *Build.Step.Options, prebuilt_v8_path: ?[]const u8, use_curl_impersonate: bool) !void {
     try moduleNetSurf(b, mod);
     mod.addImport("build_config", opts.createModule());
 
@@ -320,22 +321,61 @@ fn addDependencies(b: *Build, mod: *Build.Module, opts: *Build.Step.Options, pre
         }
 
         try buildZlib(b, mod);
-        try buildBrotli(b, mod);
-        const boringssl_dep = b.dependency("boringssl-zig", .{
-            .target = target,
-            .optimize = mod.optimize.?,
-            .force_pic = true,
-        });
 
-        const ssl = boringssl_dep.artifact("ssl");
-        ssl.bundle_ubsan_rt = false;
-        const crypto = boringssl_dep.artifact("crypto");
-        crypto.bundle_ubsan_rt = false;
+        if (use_curl_impersonate) {
+            // Use curl-impersonate with patched BoringSSL for TLS fingerprinting
+            // Build with: make install-curl-impersonate
+            const os_tag = target.result.os.tag;
+            const arch = target.result.cpu.arch;
+            const curl_imp_out_path = try std.fmt.allocPrint(
+                b.allocator,
+                "vendor/curl-impersonate/out/{s}-{s}",
+                .{ @tagName(os_tag), @tagName(arch) },
+            );
 
-        mod.linkLibrary(ssl);
-        mod.linkLibrary(crypto);
-        try buildNghttp2(b, mod);
-        try buildCurl(b, mod);
+            // Add include paths for curl-impersonate headers
+            mod.addIncludePath(b.path(b.fmt("{s}/include", .{curl_imp_out_path})));
+
+            // Link all the static libraries from curl-impersonate build
+            mod.addObjectFile(b.path(b.fmt("{s}/lib/libcurl-impersonate.a", .{curl_imp_out_path})));
+            mod.addObjectFile(b.path(b.fmt("{s}/lib/libssl.a", .{curl_imp_out_path})));
+            mod.addObjectFile(b.path(b.fmt("{s}/lib/libcrypto.a", .{curl_imp_out_path})));
+            mod.addObjectFile(b.path(b.fmt("{s}/lib/libnghttp2.a", .{curl_imp_out_path})));
+            mod.addObjectFile(b.path(b.fmt("{s}/lib/libngtcp2.a", .{curl_imp_out_path})));
+            mod.addObjectFile(b.path(b.fmt("{s}/lib/libngtcp2_crypto_boringssl.a", .{curl_imp_out_path})));
+            mod.addObjectFile(b.path(b.fmt("{s}/lib/libnghttp3.a", .{curl_imp_out_path})));
+            mod.addObjectFile(b.path(b.fmt("{s}/lib/libcares.a", .{curl_imp_out_path})));
+            mod.addObjectFile(b.path(b.fmt("{s}/lib/libbrotlidec.a", .{curl_imp_out_path})));
+            mod.addObjectFile(b.path(b.fmt("{s}/lib/libbrotlicommon.a", .{curl_imp_out_path})));
+
+            // Link system libraries
+            mod.linkSystemLibrary("z", .{});
+            mod.linkSystemLibrary("zstd", .{});
+            mod.linkSystemLibrary("idn2", .{});
+            mod.linkSystemLibrary("ldap", .{}); // Required by curl-impersonate
+
+            // Define USE_CURL_IMPERSONATE for conditional compilation
+            mod.addCMacro("USE_CURL_IMPERSONATE", "1");
+        } else {
+            // Use standard curl build with boringssl-zig
+            try buildBrotli(b, mod);
+            const boringssl_dep = b.dependency("boringssl-zig", .{
+                .target = target,
+                .optimize = mod.optimize.?,
+                .force_pic = true,
+            });
+
+            const ssl = boringssl_dep.artifact("ssl");
+            ssl.bundle_ubsan_rt = false;
+            const crypto = boringssl_dep.artifact("crypto");
+            crypto.bundle_ubsan_rt = false;
+
+            mod.linkLibrary(ssl);
+            mod.linkLibrary(crypto);
+            try buildNghttp2(b, mod);
+            try buildCurl(b, mod);
+        }
+
         try buildAda(b, mod);
 
         switch (target.result.os.tag) {

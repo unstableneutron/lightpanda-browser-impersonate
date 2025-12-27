@@ -25,6 +25,10 @@ pub const c = @cImport({
     @cInclude("curl/curl.h");
 });
 
+// When built with curl-impersonate, we have access to curl_easy_impersonate()
+// for TLS fingerprint impersonation. This is set via -DUSE_CURL_IMPERSONATE=1.
+const USE_CURL_IMPERSONATE = @hasDecl(c, "CURLOPT_IMPERSONATE");
+
 pub const ENABLE_DEBUG = false;
 pub const Client = @import("Client.zig");
 pub const Transfer = Client.Transfer;
@@ -121,6 +125,15 @@ pub const Connection = struct {
     pub fn init(ca_blob_: ?c.curl_blob, opts: *const Http.Opts) !Connection {
         const easy = c.curl_easy_init() orelse return error.FailedToInitializeEasy;
         errdefer _ = c.curl_easy_cleanup(easy);
+
+        // Apply TLS fingerprint impersonation if using curl-impersonate
+        if (comptime USE_CURL_IMPERSONATE) {
+            if (opts.impersonate.curlTarget()) |target| {
+                // curl_easy_impersonate must be called BEFORE other curl options
+                // The second parameter (1) means use default headers matching the browser
+                try errorCheck(c.curl_easy_impersonate(easy, target.ptr, 1));
+            }
+        }
 
         // timeouts
         try errorCheck(c.curl_easy_setopt(easy, c.CURLOPT_TIMEOUT_MS, @as(c_long, @intCast(opts.timeout_ms))));

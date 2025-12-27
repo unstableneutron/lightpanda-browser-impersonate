@@ -229,3 +229,40 @@ clean-mimalloc:
 install-submodule:
 	@git submodule init && \
 	git submodule update
+
+# curl-impersonate (for TLS fingerprinting)
+# -----------------------------------------
+.PHONY: install-curl-impersonate clean-curl-impersonate
+
+CURL_IMP := $(BC)vendor/curl-impersonate/out/$(OS)-$(ARCH)
+CURL_IMP_BUILD := $(BC)vendor/curl-impersonate/build
+
+## Build curl-impersonate from source (requires cmake, ninja, go, autotools, zstd)
+## Note: The upstream Makefile has issues with cd commands. We use gmake and proper env vars.
+install-curl-impersonate: clean-curl-impersonate
+	@printf "\e[36mBuilding curl-impersonate (this may take 5-10 minutes)...\e[0m\n"
+	@mkdir -p $(CURL_IMP_BUILD)
+	@cd $(CURL_IMP_BUILD) && \
+		CPPFLAGS="-I/opt/homebrew/opt/zstd/include" \
+		LDFLAGS="-L/opt/homebrew/opt/zstd/lib" \
+		../configure --prefix=$(CURL_IMP) --enable-static
+	@cd $(CURL_IMP_BUILD) && gmake build
+	@mkdir -p $(CURL_IMP)/lib $(CURL_IMP)/include
+	@cp $(CURL_IMP_BUILD)/curl-*/lib/.libs/libcurl-impersonate.a $(CURL_IMP)/lib/ 2>/dev/null || \
+		cp $(CURL_IMP_BUILD)/curl-*/src/.libs/libcurl-impersonate.a $(CURL_IMP)/lib/
+	@cp $(CURL_IMP_BUILD)/boringssl-*/lib/libssl.a $(CURL_IMP)/lib/
+	@cp $(CURL_IMP_BUILD)/boringssl-*/lib/libcrypto.a $(CURL_IMP)/lib/
+	@cp $(CURL_IMP_BUILD)/nghttp2-*/installed/lib/libnghttp2.a $(CURL_IMP)/lib/
+	@cp $(CURL_IMP_BUILD)/ngtcp2-*/installed/lib/libngtcp2.a $(CURL_IMP)/lib/
+	@cp $(CURL_IMP_BUILD)/ngtcp2-*/installed/lib/libngtcp2_crypto_boringssl.a $(CURL_IMP)/lib/
+	@cp $(CURL_IMP_BUILD)/nghttp3-*/installed/lib/libnghttp3.a $(CURL_IMP)/lib/
+	@cp $(CURL_IMP_BUILD)/c-ares-*/installed/lib/libcares.a $(CURL_IMP)/lib/
+	@cp $(CURL_IMP_BUILD)/brotli-*/out/installed/lib/libbrotlidec.a $(CURL_IMP)/lib/
+	@cp $(CURL_IMP_BUILD)/brotli-*/out/installed/lib/libbrotlicommon.a $(CURL_IMP)/lib/
+	@cp -r $(CURL_IMP_BUILD)/curl-*/include/curl $(CURL_IMP)/include/
+	@cp -r $(CURL_IMP_BUILD)/boringssl-*/include/openssl $(CURL_IMP)/include/
+	@printf "\e[33mDone curl-impersonate $(OS)-$(ARCH)\e[0m\n"
+
+clean-curl-impersonate:
+	@printf "\e[36mCleaning curl-impersonate build...\e[0m\n" && \
+	rm -Rf $(CURL_IMP_BUILD) $(CURL_IMP)

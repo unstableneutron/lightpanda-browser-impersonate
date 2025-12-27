@@ -1,15 +1,13 @@
 # LightPanda Bot Detection Reduction - Integration Plan
 
-## Status: Phase 1 Complete ✅
+## Status: Phase 2 Complete ✅
 
 ### Completed
 - ✅ `--impersonate` CLI flag with browser profile support
 - ✅ JavaScript Navigator properties match selected browser profile
 - ✅ User-Agent header matches selected browser profile
 - ✅ Anti-bot detection properties (webdriver=false, hardwareConcurrency, deviceMemory, etc.)
-
-### Deferred
-- ⏳ `curl-impersonate` TLS/HTTP2 fingerprint matching (requires building from source with patched BoringSSL)
+- ✅ **curl-impersonate TLS/HTTP2 fingerprint matching** (git submodule, built from source)
 
 ---
 
@@ -17,7 +15,7 @@
 
 This plan outlines steps to reduce bot detection by:
 1. ✅ Adding `--impersonate` CLI flag with browser profile support
-2. ⏳ Integrating `curl-impersonate` for TLS/HTTP2 fingerprint matching
+2. ✅ Integrating `curl-impersonate` for TLS/HTTP2 fingerprint matching
 3. ✅ Fixing JavaScript Navigator properties to match selected browser
 4. ✅ Ensuring consistency between HTTP headers and JS properties
 
@@ -43,18 +41,42 @@ This plan outlines steps to reduce bot detection by:
 
 ## Usage
 
+### Building with curl-impersonate (TLS fingerprinting enabled)
+
 ```bash
-# Start with default Firefox 144 profile
-./lightpanda serve --host 127.0.0.1 --port 9222
+# First, build curl-impersonate (one-time, takes ~5-10 minutes)
+make install-curl-impersonate
+
+# Build LightPanda with TLS fingerprinting
+zig build -Duse_curl_impersonate=true
+
+# Start with Firefox 144 TLS fingerprint
+./zig-out/bin/lightpanda serve --host 127.0.0.1 --port 9222 --impersonate firefox144
 
 # Start with Chrome profile
-./lightpanda serve --host 127.0.0.1 --port 9222 --impersonate chrome136
+./zig-out/bin/lightpanda serve --host 127.0.0.1 --port 9222 --impersonate chrome136
+```
 
-# Start with Safari profile
-./lightpanda serve --host 127.0.0.1 --port 9222 --impersonate safari180
+### Building without curl-impersonate (standard build)
 
-# Start with original LightPanda behavior (no impersonation)
-./lightpanda serve --host 127.0.0.1 --port 9222 --impersonate lightpanda
+```bash
+# Standard build (Navigator properties only, no TLS fingerprinting)
+zig build
+
+# Start with default Firefox profile
+./zig-out/bin/lightpanda serve --host 127.0.0.1 --port 9222
+```
+
+### Prerequisites for curl-impersonate build
+
+On macOS:
+```bash
+brew install cmake ninja autoconf automake libtool go zstd
+```
+
+On Ubuntu/Debian:
+```bash
+sudo apt install build-essential pkg-config cmake ninja-build curl autoconf automake libtool golang-go zstd libzstd-dev
 ```
 
 ---
@@ -65,12 +87,40 @@ This plan outlines steps to reduce bot detection by:
 
 | File | Changes |
 |------|---------|
-| `src/browser_profile.zig` | **NEW** - Browser profile enum with UA/platform/vendor mappings |
-| `src/main.zig` | Added `--impersonate` CLI flag, profile parsing |
-| `src/app.zig` | Added `impersonate` to Config struct |
+| `src/browser_profile.zig` | Browser profile enum with UA/platform/vendor/curlTarget mappings |
+| `src/main.zig` | `--impersonate` CLI flag, profile parsing |
+| `src/app.zig` | `impersonate` field in Config struct |
 | `src/browser/html/navigator.zig` | Dynamic Navigator properties from profile |
 | `src/browser/page.zig` | Wire profile from App to Window/Navigator |
-| `src/http/Http.zig` | Profile field in HTTP Opts (for future TLS use) |
+| `src/http/Http.zig` | Profile field in Opts, `curl_easy_impersonate()` call |
+| `build.zig` | `-Duse_curl_impersonate` flag, linking curl-impersonate libs |
+| `Makefile` | `install-curl-impersonate` target |
+| `vendor/curl-impersonate/` | Git submodule (lexiforest/curl-impersonate) |
+
+### Directory Structure
+
+```
+vendor/curl-impersonate/
+├── (git submodule → github.com/lexiforest/curl-impersonate)
+├── build/                    # Build directory (created by make)
+│   ├── boringssl-*/
+│   ├── brotli-*/
+│   ├── curl-*/
+│   ├── nghttp2-*/
+│   ├── ngtcp2-*/
+│   ├── nghttp3-*/
+│   └── c-ares-*/
+└── out/
+    └── macos-aarch64/        # Platform-specific outputs
+        ├── lib/
+        │   ├── libcurl-impersonate.a
+        │   ├── libssl.a
+        │   ├── libcrypto.a
+        │   └── ...
+        └── include/
+            ├── curl/
+            └── openssl/
+```
 
 ### Navigator Properties by Profile
 
@@ -87,55 +137,84 @@ This plan outlines steps to reduce bot detection by:
 
 ---
 
-## Phase 2: TLS Fingerprinting (Deferred)
+## Phase 2: curl-impersonate Integration
 
-### Why Deferred
+### Why Build from Source?
 
-The prebuilt `libcurl-impersonate` binaries from lexiforest/curl-impersonate have incompatible dependencies:
-- Built against a **patched BoringSSL** with custom functions (`SSL_CTX_set_delegated_credentials`, etc.)
-- Requires c-ares, ngtcp2, nghttp3 for HTTP/3 support
-- LightPanda uses standard boringssl-zig which lacks the patched functions
+The curl-impersonate integration requires building from source because:
+- It uses a **patched BoringSSL** with custom TLS fingerprinting extensions
+- The patched BoringSSL includes: delegated credentials, extension order control, key shares limit, etc.
+- Standard boringssl-zig lacks these patched functions
+- Pre-built binaries have incompatible dependencies
 
-### Future Implementation Options
+### Git Submodule
 
-1. **Build curl-impersonate from source** with its patched BoringSSL
-   - Clone lexiforest/curl-impersonate
-   - Build with their patched BoringSSL fork
-   - Link all dependencies (ngtcp2, nghttp3, c-ares, zstd, brotli)
+curl-impersonate is added as a git submodule pointing to upstream:
+```
+[submodule "vendor/curl-impersonate"]
+    path = vendor/curl-impersonate
+    url = https://github.com/lexiforest/curl-impersonate.git
+```
 
-2. **Replace boringssl-zig** with curl-impersonate's patched version
-   - Significant build system changes
-   - May affect V8 compatibility
+### Dependencies Built by `make install-curl-impersonate`
 
-3. **Application-level TLS options** (limited effectiveness)
-   - Set cipher suites, curves, TLS version via standard curl options
-   - Won't match browser fingerprints exactly
+| Library | Version | Purpose |
+|---------|---------|---------|
+| BoringSSL | patched | TLS with custom fingerprinting extensions |
+| brotli | 1.1.0 | Compression |
+| nghttp2 | 1.63.0 | HTTP/2 support |
+| ngtcp2 | 1.11.0 | QUIC/HTTP/3 support |
+| nghttp3 | 1.9.0 | HTTP/3 support |
+| c-ares | 1.30.0 | Async DNS resolution |
+| curl | 8.15.0-IMPERSONATE | Modified curl with impersonation |
 
-### curl-impersonate API Reference
+### TLS Fingerprint Features
 
-```c
-// Function signature from curl-impersonate
-CURLcode curl_easy_impersonate(CURL *curl, const char *target, int default_headers);
+When built with `-Duse_curl_impersonate=true`:
+- Cipher suites match real browser ordering
+- TLS extensions match browser fingerprint
+- HTTP/2 settings (SETTINGS frame) match browser
+- Pseudo-header order matches browser
+- ECH (Encrypted Client Hello) support
+- Post-quantum key exchange (X25519MLKEM768)
 
-// Example usage (when integrated)
-curl_easy_impersonate(easy_handle, "firefox144", 1);
+### curl_easy_impersonate API
+
+In Http.zig:
+```zig
+if (comptime USE_CURL_IMPERSONATE) {
+    if (opts.impersonate.curlTarget()) |target| {
+        // curl_easy_impersonate must be called BEFORE other curl options
+        // The second parameter (1) means use default headers matching the browser
+        try errorCheck(c.curl_easy_impersonate(easy, target.ptr, 1));
+    }
+}
 ```
 
 ---
 
 ## Verification
 
-### Test Script
+### Test Navigator Properties
 
 ```bash
-# Start server
-./lightpanda serve --host 127.0.0.1 --port 9222 --impersonate firefox144
+# Start server with TLS fingerprinting
+./zig-out/bin/lightpanda serve --host 127.0.0.1 --port 9222 --impersonate firefox144
 
 # Run test
 cd bot-test && node test-ua.mjs
 ```
 
-### Expected Output
+### Test TLS Fingerprint
+
+```bash
+# Build and test curl-impersonate directly
+./vendor/curl-impersonate/build/curl-*/src/curl-impersonate \
+    --impersonate firefox144 \
+    https://tls.peet.ws/api/all
+```
+
+### Expected Navigator Output
 
 ```json
 {
@@ -152,8 +231,30 @@ cd bot-test && node test-ua.mjs
 
 ---
 
+## Updating curl-impersonate
+
+To update to a newer version:
+
+```bash
+# Update submodule to latest
+cd vendor/curl-impersonate
+git fetch origin
+git checkout <new-tag-or-commit>
+cd ../..
+
+# Rebuild
+make clean-curl-impersonate
+make install-curl-impersonate
+
+# Test
+zig build -Duse_curl_impersonate=true
+```
+
+---
+
 ## References
 
 - [lexiforest/curl-impersonate](https://github.com/lexiforest/curl-impersonate) - curl fork with browser TLS fingerprinting
 - [TLS Fingerprinting](https://lwthiker.com/networks/2022/06/17/tls-fingerprinting.html) - Background on TLS fingerprinting
 - [HTTP/2 Fingerprinting](https://lwthiker.com/networks/2022/06/17/http2-fingerprinting.html) - Background on HTTP/2 fingerprinting
+- [tls.peet.ws](https://tls.peet.ws/api/all) - TLS fingerprint testing service
