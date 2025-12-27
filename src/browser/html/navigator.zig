@@ -16,21 +16,15 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-const std = @import("std");
-
-const builtin = @import("builtin");
+const BrowserProfile = @import("../../browser_profile.zig").Profile;
 
 // https://html.spec.whatwg.org/multipage/system-state.html#navigator
 pub const Navigator = struct {
-    agent: []const u8 = "Lightpanda/1.0",
-    version: []const u8 = "1.0",
-    vendor: []const u8 = "",
-    platform: []const u8 = std.fmt.comptimePrint("{any} {any}", .{ builtin.os.tag, builtin.cpu.arch }),
-
+    profile: BrowserProfile = .firefox144,
     language: []const u8 = "en-US",
 
     pub fn get_userAgent(self: *Navigator) []const u8 {
-        return self.agent;
+        return self.profile.navigatorUserAgent();
     }
     pub fn get_appCodeName(_: *Navigator) []const u8 {
         return "Mozilla";
@@ -39,10 +33,10 @@ pub const Navigator = struct {
         return "Netscape";
     }
     pub fn get_appVersion(self: *Navigator) []const u8 {
-        return self.version;
+        return self.profile.appVersion();
     }
     pub fn get_platform(self: *Navigator) []const u8 {
-        return self.platform;
+        return self.profile.platform();
     }
     pub fn get_product(_: *Navigator) []const u8 {
         return "Gecko";
@@ -51,7 +45,7 @@ pub const Navigator = struct {
         return "20030107";
     }
     pub fn get_vendor(self: *Navigator) []const u8 {
-        return self.vendor;
+        return self.profile.vendor();
     }
     pub fn get_vendorSub(_: *Navigator) []const u8 {
         return "";
@@ -76,6 +70,26 @@ pub const Navigator = struct {
     }
 
     pub fn get_cookieEnabled(_: *Navigator) bool {
+        return true;
+    }
+
+    pub fn get_hardwareConcurrency(_: *Navigator) u32 {
+        return 8;
+    }
+
+    pub fn get_deviceMemory(_: *Navigator) f64 {
+        return 8.0;
+    }
+
+    pub fn get_maxTouchPoints(_: *Navigator) u32 {
+        return 0;
+    }
+
+    pub fn get_webdriver(_: *Navigator) bool {
+        return false;
+    }
+
+    pub fn get_pdfViewerEnabled(_: *Navigator) bool {
         return true;
     }
 };

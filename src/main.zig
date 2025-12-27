@@ -26,6 +26,7 @@ const Server = @import("server.zig").Server;
 const SigHandler = @import("sighandler.zig").SigHandler;
 const Browser = @import("browser/browser.zig").Browser;
 const DumpStripMode = @import("browser/dump.zig").Opts.StripMode;
+const BrowserProfile = @import("browser_profile.zig").Profile;
 
 const build_config = @import("build_config");
 
@@ -82,12 +83,22 @@ fn run(gpa: Allocator, arena: Allocator, sighandler: *SigHandler) !void {
         log.opts.filter_scopes = lfs;
     }
 
-    const user_agent = blk: {
-        const USER_AGENT = "User-Agent: Lightpanda/1.0";
-        if (args.userAgentSuffix()) |suffix| {
-            break :blk try std.fmt.allocPrintSentinel(arena, "{s} {s}", .{ USER_AGENT, suffix }, 0);
+    const profile = blk: {
+        if (args.impersonate()) |imp_str| {
+            break :blk BrowserProfile.fromString(imp_str) orelse {
+                log.fatal(.app, "invalid impersonate profile", .{ .profile = imp_str });
+                return args.printUsageAndExit(false);
+            };
         }
-        break :blk USER_AGENT;
+        break :blk .firefox144; // Default profile
+    };
+
+    const user_agent = blk: {
+        const base_ua = profile.userAgent();
+        if (args.userAgentSuffix()) |suffix| {
+            break :blk try std.fmt.allocPrintSentinel(arena, "{s} {s}", .{ base_ua, suffix }, 0);
+        }
+        break :blk base_ua;
     };
 
     // _app is global to handle graceful shutdown.
@@ -101,6 +112,7 @@ fn run(gpa: Allocator, arena: Allocator, sighandler: *SigHandler) !void {
         .http_max_host_open = args.httpMaxHostOpen(),
         .http_max_concurrent = args.httpMaxConcurrent(),
         .user_agent = user_agent,
+        .impersonate = profile,
     });
     defer app.deinit();
     app.telemetry.record(.{ .run = {} });
@@ -267,6 +279,13 @@ const Command = struct {
         };
     }
 
+    fn impersonate(self: *const Command) ?[]const u8 {
+        return switch (self.mode) {
+            inline .serve, .fetch => |opts| opts.common.impersonate,
+            else => unreachable,
+        };
+    }
+
     const Mode = union(App.RunMode) {
         help: bool, // false when being printed because of an error
         fetch: Fetch,
@@ -301,6 +320,7 @@ const Command = struct {
         log_format: ?log.Format = null,
         log_filter_scopes: ?[]log.Scope = null,
         user_agent_suffix: ?[]const u8 = null,
+        impersonate: ?[]const u8 = null,
     };
 
     fn printUsageAndExit(self: *const Command, success: bool) void {
@@ -353,6 +373,10 @@ const Command = struct {
             \\
             \\--user_agent_suffix
             \\                Suffix to append to the Lightpanda/X.Y User-Agent
+            \\
+            \\--impersonate   Browser profile to impersonate for TLS/HTTP fingerprinting.
+            \\                Supported: firefox144 (default), firefox135, chrome136,
+            \\                chrome131, safari180, edge101, lightpanda (no impersonation).
             \\
         ;
 
@@ -781,6 +805,15 @@ fn parseCommonArg(
             }
         }
         common.user_agent_suffix = try allocator.dupe(u8, str);
+        return true;
+    }
+
+    if (std.mem.eql(u8, "--impersonate", opt)) {
+        const str = args.next() orelse {
+            log.fatal(.app, "missing argument value", .{ .arg = "--impersonate" });
+            return error.InvalidArgument;
+        };
+        common.impersonate = try allocator.dupe(u8, str);
         return true;
     }
 

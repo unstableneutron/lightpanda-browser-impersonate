@@ -47,6 +47,7 @@ const parser = @import("netsurf.zig");
 const storage = @import("storage/storage.zig");
 
 const polyfill = @import("polyfill/polyfill.zig");
+const Navigator = @import("html/navigator.zig").Navigator;
 
 // Page navigates to an url.
 // You can navigates multiple urls with the same page, but you have to call
@@ -135,11 +136,12 @@ pub const Page = struct {
     pub fn init(self: *Page, arena: Allocator, call_arena: Allocator, session: *Session) !void {
         const browser = session.browser;
         const script_manager = ScriptManager.init(browser, self);
+        const profile = browser.app.config.impersonate;
 
         self.* = .{
             .url = URL.empty,
             .mode = .{ .pre = {} },
-            .window = try Window.create(null, null),
+            .window = try Window.create(null, .{ .profile = profile }),
             .arena = arena,
             .session = session,
             .call_arena = call_arena,

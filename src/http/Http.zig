@@ -19,6 +19,8 @@
 const std = @import("std");
 const posix = std.posix;
 
+const BrowserProfile = @import("../browser_profile.zig").Profile;
+
 pub const c = @cImport({
     @cInclude("curl/curl.h");
 });
@@ -351,6 +353,7 @@ pub const Opts = struct {
     http_proxy: ?[:0]const u8 = null,
     proxy_bearer_token: ?[:0]const u8 = null,
     user_agent: [:0]const u8,
+    impersonate: BrowserProfile = .lightpanda,
 };
 
 pub const Method = enum(u8) {
