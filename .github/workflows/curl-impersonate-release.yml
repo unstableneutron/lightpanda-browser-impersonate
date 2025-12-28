@@ -45,7 +45,7 @@ jobs:
             autoconf automake libtool \
             libzstd-dev zstd \
             pkg-config \
-            libc++-dev libc++abi-dev
+            clang libc++-dev libc++abi-dev
 
       - name: Install build dependencies (macOS)
         if: runner.os == 'macOS'
@@ -54,6 +54,9 @@ jobs:
 
       - name: Build curl-impersonate
         run: make install-curl-impersonate
+        env:
+          CC: clang
+          CXX: clang++
 
       - name: Package artifacts
         run: |
