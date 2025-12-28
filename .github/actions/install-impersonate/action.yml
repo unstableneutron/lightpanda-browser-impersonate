@@ -1,0 +1,61 @@
+name: "Browsercore install with curl-impersonate"
+description: "Install deps for browsercore including curl-impersonate for TLS fingerprinting"
+
+inputs:
+  arch:
+    description: 'CPU arch used to select the v8 lib'
+    required: false
+    default: 'x86_64'
+  os:
+    description: 'OS used to select the v8 lib'
+    required: false
+    default: 'linux'
+  zig-v8:
+    description: 'zig v8 version to install'
+    required: false
+    default: 'v0.1.35'
+  v8:
+    description: 'v8 version to install'
+    required: false
+    default: '14.0.365.4'
+  cache-dir:
+    description: 'cache dir to use'
+    required: false
+    default: '~/.cache'
+runs:
+  using: "composite"
+
+  steps:
+    # Run upstream install action first
+    - uses: ./.github/actions/install
+      with:
+        os: ${{ inputs.os }}
+        arch: ${{ inputs.arch }}
+        zig-v8: ${{ inputs.zig-v8 }}
+        v8: ${{ inputs.v8 }}
+        cache-dir: ${{ inputs.cache-dir }}
+
+    # Get curl-impersonate version from submodule
+    - name: Get curl-impersonate version
+      id: curl-imp-version
+      shell: bash
+      run: |
+        cd vendor/curl-impersonate
+        VERSION=$(git describe --tags 2>/dev/null || git rev-parse --short HEAD)
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+    # Cache curl-impersonate
+    - name: Cache curl-impersonate
+      id: cache-curl-impersonate
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-curl-impersonate
+      with:
+        path: vendor/curl-impersonate/out/${{ inputs.os }}-${{ inputs.arch }}
+        key: curl-impersonate-${{ steps.curl-imp-version.outputs.version }}-${{ inputs.os }}-${{ inputs.arch }}
+
+    # Download pre-built curl-impersonate if not cached
+    - name: Download curl-impersonate
+      if: steps.cache-curl-impersonate.outputs.cache-hit != 'true'
+      shell: bash
+      run: make download-curl-impersonate

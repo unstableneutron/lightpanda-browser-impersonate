@@ -232,10 +232,28 @@ install-submodule:
 
 # curl-impersonate (for TLS fingerprinting)
 # -----------------------------------------
-.PHONY: install-curl-impersonate clean-curl-impersonate
+.PHONY: install-curl-impersonate clean-curl-impersonate download-curl-impersonate
 
 CURL_IMP := $(BC)vendor/curl-impersonate/out/$(OS)-$(ARCH)
 CURL_IMP_BUILD := $(BC)vendor/curl-impersonate/build
+CURL_IMP_VERSION := $(shell cd $(BC)vendor/curl-impersonate && git describe --tags 2>/dev/null || git rev-parse --short HEAD)
+CURL_IMP_RELEASE_URL := https://github.com/unstableneutron/browser/releases/download/curl-impersonate-$(CURL_IMP_VERSION)
+
+## Download pre-built curl-impersonate from GitHub Releases (fast, recommended)
+## Falls back to building from source if download fails
+download-curl-impersonate:
+	@if [ -f "$(CURL_IMP)/lib/libcurl-impersonate.a" ]; then \
+		printf "\e[33mcurl-impersonate already installed at $(CURL_IMP)\e[0m\n"; \
+	else \
+		printf "\e[36mDownloading pre-built curl-impersonate $(CURL_IMP_VERSION) for $(OS)-$(ARCH)...\e[0m\n"; \
+		mkdir -p $(CURL_IMP); \
+		if curl -fL $(CURL_IMP_RELEASE_URL)/curl-impersonate-$(OS)-$(ARCH).tar.gz | tar -xzf - -C $(CURL_IMP); then \
+			printf "\e[33mDone curl-impersonate $(OS)-$(ARCH)\e[0m\n"; \
+		else \
+			printf "\e[33mDownload failed, building from source...\e[0m\n"; \
+			$(MAKE) install-curl-impersonate; \
+		fi \
+	fi
 
 ## Build curl-impersonate from source (requires cmake, ninja, go, autotools, zstd)
 ## Note: The upstream Makefile has issues with cd commands. We use gmake and proper env vars.
