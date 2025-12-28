@@ -5,6 +5,9 @@ ZIG := zig
 BC := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 # option test filter make test F="server"
 F=
+# Use curl-impersonate for TLS fingerprinting: CURL_IMPERSONATE=1 make build
+CURL_IMPERSONATE ?= 0
+ZIG_CURL_FLAG := $(if $(filter 1,$(CURL_IMPERSONATE)),-Duse_curl_impersonate=true,)
 
 # OS and ARCH
 kernel = $(shell uname -ms)
@@ -49,16 +52,16 @@ help:
 # ------------
 .PHONY: build build-dev run run-release shell test bench wpt data end2end
 
-## Build in release-safe mode
+## Build in release-safe mode (use CURL_IMPERSONATE=1 for TLS fingerprinting)
 build:
-	@printf "\e[36mBuilding (release safe)...\e[0m\n"
-	$(ZIG) build -Doptimize=ReleaseSafe -Dgit_commit=$$(git rev-parse --short HEAD) || (printf "\e[33mBuild ERROR\e[0m\n"; exit 1;)
+	@printf "\e[36mBuilding (release safe$(if $(filter 1,$(CURL_IMPERSONATE)), + curl-impersonate,))...\e[0m\n"
+	$(ZIG) build -Doptimize=ReleaseSafe $(ZIG_CURL_FLAG) -Dgit_commit=$$(git rev-parse --short HEAD) || (printf "\e[33mBuild ERROR\e[0m\n"; exit 1;)
 	@printf "\e[33mBuild OK\e[0m\n"
 
-## Build in debug mode
+## Build in debug mode (use CURL_IMPERSONATE=1 for TLS fingerprinting)
 build-dev:
-	@printf "\e[36mBuilding (debug)...\e[0m\n"
-	@$(ZIG) build -Dgit_commit=$$(git rev-parse --short HEAD) || (printf "\e[33mBuild ERROR\e[0m\n"; exit 1;)
+	@printf "\e[36mBuilding (debug$(if $(filter 1,$(CURL_IMPERSONATE)), + curl-impersonate,))...\e[0m\n"
+	@$(ZIG) build $(ZIG_CURL_FLAG) -Dgit_commit=$$(git rev-parse --short HEAD) || (printf "\e[33mBuild ERROR\e[0m\n"; exit 1;)
 	@printf "\e[33mBuild OK\e[0m\n"
 
 ## Run the server in release mode
@@ -85,14 +88,14 @@ wpt-summary:
 	@printf "\e[36mBuilding wpt...\e[0m\n"
 	@$(ZIG) build wpt -- --summary $(filter-out $@,$(MAKECMDGOALS)) || (printf "\e[33mBuild ERROR\e[0m\n"; exit 1;)
 
-## Test - `grep` is used to filter out the huge compile command on build
+## Test - `grep` is used to filter out the huge compile command on build (use CURL_IMPERSONATE=1 for TLS fingerprinting)
 ifeq ($(OS), macos)
 test:
-	@script -q /dev/null sh -c 'TEST_FILTER="${F}" $(ZIG) build test -freference-trace --summary all' 2>&1 \
+	@script -q /dev/null sh -c 'TEST_FILTER="${F}" $(ZIG) build test $(ZIG_CURL_FLAG) -freference-trace --summary all' 2>&1 \
 		| grep --line-buffered -v "^/.*zig test -freference-trace"
 else
 test:
-	@script -qec 'TEST_FILTER="${F}" $(ZIG) build test -freference-trace --summary all' /dev/null 2>&1 \
+	@script -qec 'TEST_FILTER="${F}" $(ZIG) build test $(ZIG_CURL_FLAG) -freference-trace --summary all' /dev/null 2>&1 \
 		| grep --line-buffered -v "^/.*zig test -freference-trace"
 endif
 

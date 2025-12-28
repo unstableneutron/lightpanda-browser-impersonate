@@ -23,6 +23,13 @@ const TaggedAnyOpaque = js.TaggedAnyOpaque;
 // Loosely maps to a Browser Page.
 const Context = @This();
 
+// Key for identity_map that includes type_id to handle zero-sized structs
+// that may share the same address.
+const IdentityKey = struct {
+    ptr: usize,
+    type_id: types.BackingInt,
+};
+
 id: usize,
 page: *Page,
 isolate: v8.Isolate,
@@ -58,8 +65,9 @@ callbacks: std.ArrayListUnmanaged(v8.Persistent(v8.Function)) = .empty,
 // every PeristentObjet we've created during the lifetime of the context.
 // More importantly, it serves as an identity map - for a given Zig
 // instance, we map it to the same PersistentObject.
-// The key is the @intFromPtr of the Zig value
-identity_map: std.AutoHashMapUnmanaged(usize, PersistentObject) = .empty,
+// The key is (pointer address, type_id) to handle zero-sized structs
+// that may share the same address.
+identity_map: std.AutoHashMapUnmanaged(IdentityKey, PersistentObject) = .empty,
 
 // Some web APIs have to manage opaque values. Ideally, they use an
 // js.Object, but the js.Object has no lifetime guarantee beyond the
@@ -205,7 +213,13 @@ pub fn valueToExistingObject(self: *const Context, value: anytype) !v8.Object {
         return value.js_obj;
     }
 
-    const persistent_object = self.identity_map.get(@intFromPtr(value)) orelse {
+    const T = @TypeOf(value);
+    const ptr_info = @typeInfo(T).pointer;
+    const identity_key = if (comptime types.isEmpty(ptr_info.child))
+        IdentityKey{ .ptr = @intFromPtr(value), .type_id = types.getId(ptr_info.child) }
+    else
+        IdentityKey{ .ptr = @intFromPtr(value), .type_id = 0 };
+    const persistent_object = self.identity_map.get(identity_key) orelse {
         return error.InvalidThisForCallback;
     };
 
@@ -558,7 +572,15 @@ pub fn mapZigInstanceToJs(self: *Context, js_obj_or_template: anytype, value: an
             return self.mapZigInstanceToJs(js_obj_or_template, heap);
         },
         .pointer => |ptr| {
-            const gop = try self.identity_map.getOrPut(arena, @intFromPtr(value));
+            // For empty structs, include type_id in the key because they can
+            // share the same address (e.g., PluginArray and MimeTypeArray in Navigator).
+            // For non-empty structs, just use the pointer address to preserve
+            // polymorphism (e.g., HTMLDivElement accessed as Element).
+            const identity_key = if (comptime types.isEmpty(ptr.child))
+                IdentityKey{ .ptr = @intFromPtr(value), .type_id = types.getId(ptr.child) }
+            else
+                IdentityKey{ .ptr = @intFromPtr(value), .type_id = 0 };
+            const gop = try self.identity_map.getOrPut(arena, identity_key);
             if (gop.found_existing) {
                 // we've seen this instance before, return the same
                 // PersistentObject.
@@ -592,7 +614,7 @@ pub fn mapZigInstanceToJs(self: *Context, js_obj_or_template: anytype, value: an
                 const meta = self.meta_lookup[types.getId(ptr.child)];
 
                 tao.* = .{
-                    .ptr = value,
+                    .ptr = @constCast(value),
                     .index = meta.index,
                     .subtype = meta.subtype,
                 };
