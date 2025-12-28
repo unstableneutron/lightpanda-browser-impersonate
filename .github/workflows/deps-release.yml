@@ -56,7 +56,7 @@ jobs:
       - name: Install build dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install cmake pkg-config gperf ninja autoconf automake libtool go zstd
+          brew install cmake pkg-config gperf ninja autoconf automake libtool go zstd make
 
       - uses: mlugg/setup-zig@v2
 
