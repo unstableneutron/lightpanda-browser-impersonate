@@ -1,0 +1,168 @@
+name: Build Dependencies
+
+on:
+  push:
+    branches: [curl-impersonate]
+    paths:
+      - 'vendor/netsurf/**'
+      - 'vendor/mimalloc/**'
+      - 'vendor/libiconv/**'
+      - '.github/workflows/deps-release.yml'
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: 'Force rebuild all deps'
+        required: false
+        default: 'false'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+            platform: linux
+          - os: ubuntu-22.04-arm
+            arch: aarch64
+            platform: linux
+          - os: macos-14
+            arch: aarch64
+            platform: macos
+    
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake pkg-config gperf \
+            libexpat1-dev libglib2.0-dev
+
+      - name: Install build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install cmake pkg-config gperf
+
+      - uses: mlugg/setup-zig@v2
+
+      - name: Build libiconv
+        run: make build-libiconv
+
+      - name: Build mimalloc
+        run: make build-mimalloc
+
+      - name: Build netsurf
+        run: make build-netsurf
+
+      - name: Package libiconv
+        run: |
+          cd vendor/libiconv/out/${{ matrix.platform }}-${{ matrix.arch }}
+          tar -czvf libiconv.tar.gz lib include
+          mv libiconv.tar.gz ${{ github.workspace }}/
+
+      - name: Package mimalloc
+        run: |
+          cd vendor/mimalloc/out/${{ matrix.platform }}-${{ matrix.arch }}
+          tar -czvf mimalloc.tar.gz lib
+          mv mimalloc.tar.gz ${{ github.workspace }}/
+
+      - name: Package netsurf
+        run: |
+          cd vendor/netsurf/out/${{ matrix.platform }}-${{ matrix.arch }}
+          tar -czvf netsurf.tar.gz lib include share
+          mv netsurf.tar.gz ${{ github.workspace }}/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deps-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            libiconv.tar.gz
+            mimalloc.tar.gz
+            netsurf.tar.gz
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          # Create per-platform release directories
+          for platform_arch in linux-x86_64 linux-aarch64 macos-aarch64; do
+            mkdir -p "release/${platform_arch}"
+          done
+          
+          # Move artifacts to correct directories
+          for dir in artifacts/deps-*; do
+            platform_arch=$(basename "$dir" | sed 's/deps-//')
+            mv "$dir"/*.tar.gz "release/${platform_arch}/" || true
+          done
+          
+          ls -laR release/
+
+      - name: Create/update Linux x86_64 release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: deps-linux-x86_64
+          name: Dependencies (Linux x86_64)
+          body: |
+            Pre-built dependencies for Linux x86_64.
+            
+            ## Included
+            - libiconv
+            - mimalloc  
+            - netsurf (libdom, libhubbub, libparserutils, libwapcaplet)
+          files: release/linux-x86_64/*
+          draft: false
+          prerelease: false
+
+      - name: Create/update Linux aarch64 release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: deps-linux-aarch64
+          name: Dependencies (Linux aarch64)
+          body: |
+            Pre-built dependencies for Linux aarch64.
+            
+            ## Included
+            - libiconv
+            - mimalloc  
+            - netsurf (libdom, libhubbub, libparserutils, libwapcaplet)
+          files: release/linux-aarch64/*
+          draft: false
+          prerelease: false
+
+      - name: Create/update macOS aarch64 release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: deps-macos-aarch64
+          name: Dependencies (macOS aarch64)
+          body: |
+            Pre-built dependencies for macOS aarch64 (Apple Silicon).
+            
+            ## Included
+            - libiconv
+            - mimalloc  
+            - netsurf (libdom, libhubbub, libparserutils, libwapcaplet)
+          files: release/macos-aarch64/*
+          draft: false
+          prerelease: false

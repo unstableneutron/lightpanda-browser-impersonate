@@ -54,8 +54,8 @@ runs:
         path: vendor/curl-impersonate/out/${{ inputs.os }}-${{ inputs.arch }}
         key: curl-impersonate-${{ steps.curl-imp-version.outputs.version }}-${{ inputs.os }}-${{ inputs.arch }}
 
-    # Download pre-built curl-impersonate if not cached
-    - name: Download curl-impersonate
+    # Install curl-impersonate (downloads pre-built, falls back to build)
+    - name: Install curl-impersonate
       if: steps.cache-curl-impersonate.outputs.cache-hit != 'true'
       shell: bash
-      run: make download-curl-impersonate
+      run: make install-curl-impersonate

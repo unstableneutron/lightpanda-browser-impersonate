@@ -103,30 +103,65 @@ end2end:
 
 # Install and build required dependencies commands
 # ------------
+# Pattern: install-X tries download first, falls back to build
+#          build-X always builds from source
 .PHONY: install-submodule
-.PHONY: install-libiconv
-.PHONY: _install-netsurf install-netsurf clean-netsurf test-netsurf install-netsurf-dev
-.PHONY: install-mimalloc install-mimalloc-dev clean-mimalloc
+.PHONY: install-libiconv build-libiconv clean-libiconv
+.PHONY: install-netsurf build-netsurf clean-netsurf test-netsurf
+.PHONY: install-mimalloc build-mimalloc clean-mimalloc
+.PHONY: install-curl-impersonate build-curl-impersonate clean-curl-impersonate
 .PHONY: install-dev install
 
+# Pre-built deps release URL (for download)
+DEPS_RELEASE_URL := https://github.com/unstableneutron/lightpanda-browser-impersonate/releases/download/deps-$(OS)-$(ARCH)
+
 ## Install and build dependencies for release
-install: install-submodule install-libiconv install-netsurf install-mimalloc
+install: install-submodule install-libiconv install-netsurf install-mimalloc install-curl-impersonate
 
 ## Install and build dependencies for dev
-install-dev: install-submodule install-libiconv install-netsurf-dev install-mimalloc-dev
-
-install-netsurf-dev: _install-netsurf
-install-netsurf-dev: OPTCFLAGS := -O0 -g -DNDEBUG
-
-install-netsurf: _install-netsurf
-install-netsurf: OPTCFLAGS := -DNDEBUG
+install-dev: install-submodule install-libiconv install-netsurf-dev install-mimalloc-dev install-curl-impersonate
 
 BC_NS := $(BC)vendor/netsurf/out/$(OS)-$(ARCH)
 ICONV := $(BC)vendor/libiconv/out/$(OS)-$(ARCH)
-# TODO: add Linux iconv path (I guess it depends on the distro)
-# TODO: this way of linking libiconv is not ideal. We should have a more generic way
-# and stick to a specif version. Maybe build from source. Anyway not now.
-_install-netsurf: clean-netsurf
+
+# netsurf: install tries download, falls back to build
+install-netsurf-dev: OPTCFLAGS := -O0 -g -DNDEBUG
+install-netsurf-dev:
+	@if [ -f "$(BC_NS)/lib/libdom.a" ]; then \
+		printf "\e[33mnetsurf already installed at $(BC_NS)\e[0m\n"; \
+	else \
+		printf "\e[36mDownloading pre-built netsurf for $(OS)-$(ARCH)...\e[0m\n"; \
+		mkdir -p $(BC_NS); \
+		if curl -fL $(DEPS_RELEASE_URL)/netsurf.tar.gz | tar -xzf - -C $(BC_NS); then \
+			printf "\e[33mDone netsurf $(OS)-$(ARCH)\e[0m\n"; \
+		else \
+			printf "\e[33mDownload failed, building from source...\e[0m\n"; \
+			$(MAKE) build-netsurf-dev; \
+		fi \
+	fi
+
+install-netsurf: OPTCFLAGS := -DNDEBUG
+install-netsurf:
+	@if [ -f "$(BC_NS)/lib/libdom.a" ]; then \
+		printf "\e[33mnetsurf already installed at $(BC_NS)\e[0m\n"; \
+	else \
+		printf "\e[36mDownloading pre-built netsurf for $(OS)-$(ARCH)...\e[0m\n"; \
+		mkdir -p $(BC_NS); \
+		if curl -fL $(DEPS_RELEASE_URL)/netsurf.tar.gz | tar -xzf - -C $(BC_NS); then \
+			printf "\e[33mDone netsurf $(OS)-$(ARCH)\e[0m\n"; \
+		else \
+			printf "\e[33mDownload failed, building from source...\e[0m\n"; \
+			$(MAKE) build-netsurf; \
+		fi \
+	fi
+
+build-netsurf-dev: OPTCFLAGS := -O0 -g -DNDEBUG
+build-netsurf-dev: _build-netsurf
+
+build-netsurf: OPTCFLAGS := -DNDEBUG
+build-netsurf: _build-netsurf
+
+_build-netsurf: clean-netsurf
 	@printf "\e[36mInstalling NetSurf...\e[0m\n" && \
 	ls $(ICONV)/lib/libiconv.a 1> /dev/null || (printf "\e[33mERROR: you need to execute 'make install-libiconv'\e[0m\n"; exit 1;) && \
 	mkdir -p $(BC_NS) && \
@@ -178,19 +213,34 @@ test-netsurf:
 	cd vendor/netsurf/libdom && \
 	BUILDDIR=$(BC_NS)/build/libdom make test
 
-download-libiconv:
+# libiconv: install tries download pre-built, falls back to build
+install-libiconv:
+	@if [ -f "$(ICONV)/lib/libiconv.a" ]; then \
+		printf "\e[33mlibiconv already installed at $(ICONV)\e[0m\n"; \
+	else \
+		printf "\e[36mDownloading pre-built libiconv for $(OS)-$(ARCH)...\e[0m\n"; \
+		mkdir -p $(ICONV); \
+		if curl -fL $(DEPS_RELEASE_URL)/libiconv.tar.gz | tar -xzf - -C $(ICONV); then \
+			printf "\e[33mDone libiconv $(OS)-$(ARCH)\e[0m\n"; \
+		else \
+			printf "\e[33mDownload failed, building from source...\e[0m\n"; \
+			$(MAKE) build-libiconv; \
+		fi \
+	fi
+
+build-libiconv: _download-libiconv-src clean-libiconv
+	@printf "\e[36mBuilding libiconv from source...\e[0m\n"
+	@cd vendor/libiconv/libiconv-1.17 && \
+	./configure --prefix=$(ICONV) --enable-static && \
+	make && make install
+	@printf "\e[33mDone libiconv $(OS)-$(ARCH)\e[0m\n"
+
+_download-libiconv-src:
 ifeq ("$(wildcard vendor/libiconv/libiconv-1.17)","")
 	@mkdir -p vendor/libiconv
 	@cd vendor/libiconv && \
 	curl -L https://github.com/lightpanda-io/libiconv/releases/download/1.17/libiconv-1.17.tar.gz | tar -xvzf -
 endif
-
-build-libiconv: clean-libiconv
-	@cd vendor/libiconv/libiconv-1.17 && \
-	./configure --prefix=$(ICONV) --enable-static && \
-	make && make install
-
-install-libiconv: download-libiconv build-libiconv
 
 clean-libiconv:
 ifneq ("$(wildcard vendor/libiconv/libiconv-1.17/Makefile)","")
@@ -201,26 +251,53 @@ endif
 data:
 	cd src/data && go run public_suffix_list_gen.go > public_suffix_list.zig
 
-.PHONY: _build_mimalloc
-
+# mimalloc: install tries download, falls back to build
 MIMALLOC := $(BC)vendor/mimalloc/out/$(OS)-$(ARCH)
-_build_mimalloc: clean-mimalloc
+
+install-mimalloc-dev:
+	@if [ -f "$(MIMALLOC)/lib/libmimalloc.a" ]; then \
+		printf "\e[33mmimalloc already installed at $(MIMALLOC)\e[0m\n"; \
+	else \
+		printf "\e[36mDownloading pre-built mimalloc for $(OS)-$(ARCH)...\e[0m\n"; \
+		mkdir -p $(MIMALLOC); \
+		if curl -fL $(DEPS_RELEASE_URL)/mimalloc.tar.gz | tar -xzf - -C $(MIMALLOC); then \
+			printf "\e[33mDone mimalloc $(OS)-$(ARCH)\e[0m\n"; \
+		else \
+			printf "\e[33mDownload failed, building from source...\e[0m\n"; \
+			$(MAKE) build-mimalloc-dev; \
+		fi \
+	fi
+
+install-mimalloc:
+	@if [ -f "$(MIMALLOC)/lib/libmimalloc.a" ]; then \
+		printf "\e[33mmimalloc already installed at $(MIMALLOC)\e[0m\n"; \
+	else \
+		printf "\e[36mDownloading pre-built mimalloc for $(OS)-$(ARCH)...\e[0m\n"; \
+		mkdir -p $(MIMALLOC); \
+		if curl -fL $(DEPS_RELEASE_URL)/mimalloc.tar.gz | tar -xzf - -C $(MIMALLOC); then \
+			printf "\e[33mDone mimalloc $(OS)-$(ARCH)\e[0m\n"; \
+		else \
+			printf "\e[33mDownload failed, building from source...\e[0m\n"; \
+			$(MAKE) build-mimalloc; \
+		fi \
+	fi
+
+build-mimalloc-dev: OPTS=-DCMAKE_BUILD_TYPE=Debug
+build-mimalloc-dev: _build-mimalloc
+	@cd $(MIMALLOC) && \
+	mv build/libmimalloc-debug.a lib/libmimalloc.a
+
+build-mimalloc: _build-mimalloc
+	@cd $(MIMALLOC) && \
+	mv build/libmimalloc.a lib/libmimalloc.a
+
+_build-mimalloc: clean-mimalloc
+	@printf "\e[36mBuilding mimalloc from source...\e[0m\n"
 	@mkdir -p $(MIMALLOC)/build && \
 	cd $(MIMALLOC)/build && \
 	cmake -DMI_BUILD_SHARED=OFF -DMI_BUILD_OBJECT=OFF -DMI_BUILD_TESTS=OFF -DMI_OVERRIDE=OFF $(OPTS) ../../.. && \
 	make && \
 	mkdir -p $(MIMALLOC)/lib
-
-install-mimalloc-dev: _build_mimalloc
-install-mimalloc-dev: OPTS=-DCMAKE_BUILD_TYPE=Debug
-install-mimalloc-dev:
-	@cd $(MIMALLOC) && \
-	mv build/libmimalloc-debug.a lib/libmimalloc.a
-
-install-mimalloc: _build_mimalloc
-install-mimalloc:
-	@cd $(MIMALLOC) && \
-	mv build/libmimalloc.a lib/libmimalloc.a
 
 clean-mimalloc:
 	@rm -Rf $(MIMALLOC)/build
@@ -232,16 +309,13 @@ install-submodule:
 
 # curl-impersonate (for TLS fingerprinting)
 # -----------------------------------------
-.PHONY: install-curl-impersonate clean-curl-impersonate download-curl-impersonate
-
 CURL_IMP := $(BC)vendor/curl-impersonate/out/$(OS)-$(ARCH)
 CURL_IMP_BUILD := $(BC)vendor/curl-impersonate/build
 CURL_IMP_VERSION := $(shell cd $(BC)vendor/curl-impersonate && git fetch --tags 2>/dev/null; git describe --tags 2>/dev/null || git rev-parse --short HEAD)
 CURL_IMP_RELEASE_URL := https://github.com/unstableneutron/lightpanda-browser-impersonate/releases/download/curl-impersonate-$(CURL_IMP_VERSION)
 
-## Download pre-built curl-impersonate from GitHub Releases (fast, recommended)
-## Falls back to building from source if download fails
-download-curl-impersonate:
+## Install curl-impersonate: tries download, falls back to build
+install-curl-impersonate:
 	@if [ -f "$(CURL_IMP)/lib/libcurl-impersonate.a" ]; then \
 		printf "\e[33mcurl-impersonate already installed at $(CURL_IMP)\e[0m\n"; \
 	else \
@@ -251,13 +325,12 @@ download-curl-impersonate:
 			printf "\e[33mDone curl-impersonate $(OS)-$(ARCH)\e[0m\n"; \
 		else \
 			printf "\e[33mDownload failed, building from source...\e[0m\n"; \
-			$(MAKE) install-curl-impersonate; \
+			$(MAKE) build-curl-impersonate; \
 		fi \
 	fi
 
 ## Build curl-impersonate from source (requires cmake, ninja, go, autotools, zstd)
-## Note: The upstream Makefile has issues with cd commands. We use gmake and proper env vars.
-install-curl-impersonate: clean-curl-impersonate
+build-curl-impersonate: clean-curl-impersonate
 	@printf "\e[36mBuilding curl-impersonate (this may take 5-10 minutes)...\e[0m\n"
 	@mkdir -p $(CURL_IMP_BUILD)
 ifeq ($(OS), macos)
