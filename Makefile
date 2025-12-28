@@ -236,7 +236,7 @@ install-submodule:
 
 CURL_IMP := $(BC)vendor/curl-impersonate/out/$(OS)-$(ARCH)
 CURL_IMP_BUILD := $(BC)vendor/curl-impersonate/build
-CURL_IMP_VERSION := $(shell cd $(BC)vendor/curl-impersonate && git describe --tags 2>/dev/null || git rev-parse --short HEAD)
+CURL_IMP_VERSION := $(shell cd $(BC)vendor/curl-impersonate && git fetch --tags 2>/dev/null; git describe --tags 2>/dev/null || git rev-parse --short HEAD)
 CURL_IMP_RELEASE_URL := https://github.com/unstableneutron/lightpanda-browser-impersonate/releases/download/curl-impersonate-$(CURL_IMP_VERSION)
 
 ## Download pre-built curl-impersonate from GitHub Releases (fast, recommended)

@@ -89,6 +89,8 @@ jobs:
             echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
           else
             cd vendor/curl-impersonate
+            # Fetch tags to ensure git describe works
+            git fetch --tags 2>/dev/null || true
             VERSION=$(git describe --tags 2>/dev/null || git rev-parse --short HEAD)
             echo "version=${VERSION}" >> $GITHUB_OUTPUT
           fi
