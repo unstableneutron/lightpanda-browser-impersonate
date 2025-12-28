@@ -1,6 +1,12 @@
 {
   description = "headless browser designed for AI and automation";
 
+  # Binary cache for pre-built dependencies (curl-impersonate, dev shell, etc.)
+  nixConfig = {
+    extra-substituters = ["https://lightpanda-browser-impersonate.cachix.org"];
+    extra-trusted-public-keys = ["lightpanda-browser-impersonate.cachix.org-1:ONbOhUxYhjb703OrnTS4x9DE6z//U6JlKjs5pWWGxNc="];
+  };
+
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/release-25.05";
 
@@ -61,12 +67,22 @@
               gcc.cc.lib
               crtFiles
 
-              # Libaries
+              # Libraries
               expat.dev
               glib.dev
               glibc.dev
               zlib
               zlib.dev
+
+              # curl-impersonate build dependencies (for TLS fingerprinting)
+              ninja
+              go
+              autoconf
+              automake
+              libtool
+              zstd
+              zstd.dev
+              gnumake
             ];
         };
       in
