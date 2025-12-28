@@ -375,8 +375,7 @@ const Command = struct {
             \\                Suffix to append to the Lightpanda/X.Y User-Agent
             \\
             \\--impersonate   Browser profile to impersonate for TLS/HTTP fingerprinting.
-            \\                Supported: firefox144 (default), firefox135, chrome136,
-            \\                chrome131, safari180, edge101, lightpanda (no impersonation).
+            \\                Default: lightpanda (no impersonation). See docs for full list.
             \\
         ;
 
