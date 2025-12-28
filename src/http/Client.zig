@@ -537,6 +537,14 @@ fn endTransfer(self: *Client, transfer: *Transfer) void {
     const handle = transfer._handle.?;
 
     errorMCheck(c.curl_multi_remove_handle(self.multi, handle.conn.easy)) catch |err| {
+        if (err == error.RecursiveApiCall) {
+            // This happens when abort() is called from within a curl callback
+            // (e.g., JavaScript in XHR destructor during garbage collection).
+            // We can't remove the handle now, so just mark it for later cleanup.
+            // The transfer will be cleaned up when curl reports it as complete.
+            log.debug(.http, "defer handle removal", .{});
+            return;
+        }
         log.fatal(.http, "Failed to remove handle", .{ .err = err });
     };
 
@@ -865,7 +873,12 @@ pub const Transfer = struct {
         if (self._handle != null) {
             self.client.endTransfer(self);
         }
-        self.deinit();
+        // If endTransfer returned early (RecursiveApiCall), the handle is still set.
+        // In that case, don't deinit - the transfer will be cleaned up later
+        // when curl reports the transfer as complete.
+        if (self._handle == null) {
+            self.deinit();
+        }
     }
 
     // abortAuthChallenge is called when an auth challenge interception is
