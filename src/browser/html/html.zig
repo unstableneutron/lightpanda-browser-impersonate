@@ -24,6 +24,7 @@ const Navigator = @import("navigator.zig").Navigator;
 const History = @import("History.zig");
 const Location = @import("location.zig").Location;
 const MediaQueryList = @import("media_query_list.zig").MediaQueryList;
+const plugin = @import("plugin.zig");
 
 pub const Interfaces = .{
     HTMLDocument,
@@ -40,4 +41,5 @@ pub const Interfaces = .{
     @import("screen.zig").Interfaces,
     @import("error_event.zig").ErrorEvent,
     @import("AbortController.zig").Interfaces,
+    plugin.Interfaces,
 };

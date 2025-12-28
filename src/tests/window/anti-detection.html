@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<script src="../testing.js"></script>
+
+<script id=window-dimensions>
+  // Anti-detection: outerWidth/outerHeight should not be 0
+  testing.expectEqual(true, window.outerWidth > 0, 'outerWidth should be greater than 0');
+  testing.expectEqual(true, window.outerHeight > 0, 'outerHeight should be greater than 0');
+  
+  // outerHeight should be innerHeight + browser chrome (85px)
+  testing.expectEqual(window.innerHeight + 85, window.outerHeight, 'outerHeight should be innerHeight + 85');
+  
+  // outerWidth should equal innerWidth
+  testing.expectEqual(window.innerWidth, window.outerWidth, 'outerWidth should equal innerWidth');
+</script>

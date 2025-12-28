@@ -1,8 +1,42 @@
 <!DOCTYPE html>
 <script src="../testing.js"></script>
 
-<script id=navigator>
-  testing.expectEqual('Lightpanda/1.0',  navigator.userAgent);
-  testing.expectEqual('1.0',  navigator.appVersion);
-  testing.expectEqual('en-US',  navigator.language);
+<script id=navigator-basic>
+  // Basic navigator properties
+  testing.expectEqual('en-US', navigator.language);
+  testing.expectEqual('Mozilla', navigator.appCodeName);
+  testing.expectEqual('Netscape', navigator.appName);
+  testing.expectEqual('Gecko', navigator.product);
+</script>
+
+<script id=navigator-anti-detection>
+  // Anti-detection: webdriver should NOT exist as a property
+  testing.expectEqual(false, 'webdriver' in navigator, 'webdriver property should not exist');
+  testing.expectEqual(undefined, navigator.webdriver, 'navigator.webdriver should be undefined');
+  
+  // Anti-detection: languages should be a non-empty array
+  testing.expectEqual(true, Array.isArray(navigator.languages), 'languages should be an array');
+  testing.expectEqual(true, navigator.languages.length > 0, 'languages should not be empty');
+  testing.expectEqual('en-US', navigator.languages[0], 'first language should be en-US');
+  
+  // Anti-detection: plugins should have at least PDF plugin
+  testing.expectEqual(true, navigator.plugins.length > 0, 'plugins should not be empty');
+  testing.expectEqual('PDF Viewer', navigator.plugins[0].name, 'first plugin should be PDF Viewer');
+  testing.expectEqual(true, typeof navigator.plugins.item === 'function', 'plugins.item should be a function');
+  testing.expectEqual(true, typeof navigator.plugins.namedItem === 'function', 'plugins.namedItem should be a function');
+  
+  // Anti-detection: mimeTypes should have application/pdf
+  testing.expectEqual(true, navigator.mimeTypes.length > 0, 'mimeTypes should not be empty');
+  testing.expectEqual('application/pdf', navigator.mimeTypes[0].type, 'first mimeType should be application/pdf');
+  
+  // Anti-detection: cross-reference between plugins and mimeTypes
+  testing.expectEqual(navigator.plugins[0], navigator.mimeTypes[0].enabledPlugin, 'mimeType.enabledPlugin should reference the plugin');
+  
+  // Anti-detection: pdfViewerEnabled should be true
+  testing.expectEqual(true, navigator.pdfViewerEnabled, 'pdfViewerEnabled should be true');
+  
+  // Anti-detection: realistic hardware values
+  testing.expectEqual(8, navigator.hardwareConcurrency, 'hardwareConcurrency should be 8');
+  testing.expectEqual(8.0, navigator.deviceMemory, 'deviceMemory should be 8');
+  testing.expectEqual(0, navigator.maxTouchPoints, 'maxTouchPoints should be 0 for non-touch');
 </script>

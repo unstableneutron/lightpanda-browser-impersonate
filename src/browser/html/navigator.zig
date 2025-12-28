@@ -17,11 +17,14 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 const BrowserProfile = @import("../../browser_profile.zig").Profile;
+const plugin = @import("plugin.zig");
 
 // https://html.spec.whatwg.org/multipage/system-state.html#navigator
 pub const Navigator = struct {
     profile: BrowserProfile = .firefox144,
     language: []const u8 = "en-US",
+    plugins: plugin.PluginArray = .{},
+    mime_types: plugin.MimeTypeArray = .{},
 
     pub fn get_userAgent(self: *Navigator) []const u8 {
         return self.profile.navigatorUserAgent();
@@ -53,10 +56,7 @@ pub const Navigator = struct {
     pub fn get_language(self: *Navigator) []const u8 {
         return self.language;
     }
-    // TODO wait for arrays.
-    //pub fn get_languages(self: *Navigator) [][]const u8 {
-    //    return .{self.language};
-    //}
+
     pub fn get_online(_: *Navigator) bool {
         return true;
     }
@@ -85,12 +85,20 @@ pub const Navigator = struct {
         return 0;
     }
 
-    pub fn get_webdriver(_: *Navigator) bool {
-        return false;
+    pub fn get_languages(self: *Navigator) []const []const u8 {
+        return self.profile.languages();
     }
 
     pub fn get_pdfViewerEnabled(_: *Navigator) bool {
         return true;
+    }
+
+    pub fn get_plugins(self: *Navigator) *plugin.PluginArray {
+        return &self.plugins;
+    }
+
+    pub fn get_mimeTypes(self: *Navigator) *plugin.MimeTypeArray {
+        return &self.mime_types;
     }
 };
 

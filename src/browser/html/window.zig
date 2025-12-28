@@ -201,6 +201,18 @@ pub const Window = struct {
         return page.renderer.width();
     }
 
+    /// The width of the browser window including scrollbars and borders.
+    /// In headless mode, we set this equal to innerWidth to avoid detection.
+    pub fn get_outerWidth(_: *Window, page: *Page) u32 {
+        return page.renderer.width();
+    }
+
+    /// The height of the browser window including toolbars and borders.
+    /// We add 85 pixels for the browser chrome (toolbar, tabs, etc.) to match real browsers.
+    pub fn get_outerHeight(_: *Window, page: *Page) u32 {
+        return page.renderer.height() + 85;
+    }
+
     pub fn get_name(self: *Window) []const u8 {
         return self.target;
     }
@@ -513,4 +525,8 @@ const testing = @import("../../testing.zig");
 test "Browser: Window" {
     try testing.htmlRunner("window/window.html");
     try testing.htmlRunner("window/frames.html");
+}
+
+test "Browser: Window Anti-Detection" {
+    try testing.htmlRunner("window/anti-detection.html");
 }

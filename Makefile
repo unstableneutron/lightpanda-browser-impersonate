@@ -242,11 +242,17 @@ CURL_IMP_BUILD := $(BC)vendor/curl-impersonate/build
 install-curl-impersonate: clean-curl-impersonate
 	@printf "\e[36mBuilding curl-impersonate (this may take 5-10 minutes)...\e[0m\n"
 	@mkdir -p $(CURL_IMP_BUILD)
+ifeq ($(OS), macos)
 	@cd $(CURL_IMP_BUILD) && \
 		CPPFLAGS="-I/opt/homebrew/opt/zstd/include" \
 		LDFLAGS="-L/opt/homebrew/opt/zstd/lib" \
 		../configure --prefix=$(CURL_IMP) --enable-static
 	@cd $(CURL_IMP_BUILD) && gmake build
+else
+	@cd $(CURL_IMP_BUILD) && \
+		../configure --prefix=$(CURL_IMP) --enable-static
+	@cd $(CURL_IMP_BUILD) && make build
+endif
 	@mkdir -p $(CURL_IMP)/lib $(CURL_IMP)/include
 	@cp $(CURL_IMP_BUILD)/curl-*/lib/.libs/libcurl-impersonate.a $(CURL_IMP)/lib/ 2>/dev/null || \
 		cp $(CURL_IMP_BUILD)/curl-*/src/.libs/libcurl-impersonate.a $(CURL_IMP)/lib/
@@ -266,3 +272,27 @@ install-curl-impersonate: clean-curl-impersonate
 clean-curl-impersonate:
 	@printf "\e[36mCleaning curl-impersonate build...\e[0m\n" && \
 	rm -Rf $(CURL_IMP_BUILD) $(CURL_IMP)
+
+# Docker
+# ------
+.PHONY: docker docker-impersonate docker-all
+
+DOCKER_IMAGE := lightpanda/browser
+DOCKER_TAG := local
+
+## Build standard Docker image (no TLS fingerprinting)
+docker:
+	@printf "\e[36mBuilding Docker image (standard)...\e[0m\n"
+	docker build --build-arg GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
+		-t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+
+## Build Docker image with curl-impersonate (TLS fingerprinting enabled)
+docker-impersonate:
+	@printf "\e[36mBuilding Docker image with curl-impersonate (this may take 15-20 minutes)...\e[0m\n"
+	docker build --build-arg USE_CURL_IMPERSONATE=1 \
+		--build-arg GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
+		-t $(DOCKER_IMAGE):$(DOCKER_TAG)-impersonate .
+
+## Build both Docker images
+docker-all: docker docker-impersonate
+	@printf "\e[33mDone building all Docker images\e[0m\n"

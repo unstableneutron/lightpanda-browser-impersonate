@@ -128,6 +128,17 @@ pub const Profile = enum {
         return "Accept-Language: en-US,en;q=0.9";
     }
 
+    /// Returns navigator.languages array.
+    pub fn languages(self: Profile) []const []const u8 {
+        return switch (self) {
+            .lightpanda => &[_][]const u8{ "en-US", "en" },
+            .firefox144, .firefox135 => &[_][]const u8{ "en-US", "en" },
+            .chrome136, .chrome131 => &[_][]const u8{ "en-US", "en" },
+            .safari180 => &[_][]const u8{ "en-US", "en" },
+            .edge101 => &[_][]const u8{ "en-US", "en" },
+        };
+    }
+
     /// Returns a list of supported profile names for help text.
     pub fn supportedProfiles() []const u8 {
         return "firefox144 (default), firefox135, chrome136, chrome131, safari180, edge101, lightpanda, default";
