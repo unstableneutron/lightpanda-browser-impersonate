@@ -119,7 +119,10 @@ end2end:
 .PHONY: install-dev install
 
 # Pre-built deps release URL (for download)
-DEPS_RELEASE_URL := https://github.com/unstableneutron/lightpanda-browser-impersonate/releases/download/deps-$(OS)-$(ARCH)
+# DEPS_KEY is derived from the last commit that changed vendor/
+DEPS_KEY := $(shell git log -1 --format=%h -- vendor/)
+DEPS_RELEASE_URL := https://github.com/unstableneutron/lightpanda-browser-impersonate/releases/download/deps-$(OS)-$(ARCH)-$(DEPS_KEY)
+DEPS_RELEASE_URL_ALIAS := https://github.com/unstableneutron/lightpanda-browser-impersonate/releases/download/deps-$(OS)-$(ARCH)
 
 ## Install and build dependencies for release
 install: install-submodule install-v8 install-libiconv install-netsurf install-mimalloc install-curl-impersonate
@@ -139,7 +142,9 @@ install-netsurf-dev:
 		printf "\e[36mDownloading pre-built netsurf for $(OS)-$(ARCH)...\e[0m\n"; \
 		mkdir -p $(BC_NS); \
 		if curl -fL $(DEPS_RELEASE_URL)/netsurf.tar.gz | tar -xzf - -C $(BC_NS); then \
-			printf "\e[33mDone netsurf $(OS)-$(ARCH)\e[0m\n"; \
+			printf "\e[33mDone netsurf $(OS)-$(ARCH) (versioned)\e[0m\n"; \
+		elif curl -fL $(DEPS_RELEASE_URL_ALIAS)/netsurf.tar.gz | tar -xzf - -C $(BC_NS); then \
+			printf "\e[33mDone netsurf $(OS)-$(ARCH) (alias)\e[0m\n"; \
 		else \
 			printf "\e[33mDownload failed, building from source...\e[0m\n"; \
 			$(MAKE) build-netsurf-dev; \
@@ -154,7 +159,9 @@ install-netsurf:
 		printf "\e[36mDownloading pre-built netsurf for $(OS)-$(ARCH)...\e[0m\n"; \
 		mkdir -p $(BC_NS); \
 		if curl -fL $(DEPS_RELEASE_URL)/netsurf.tar.gz | tar -xzf - -C $(BC_NS); then \
-			printf "\e[33mDone netsurf $(OS)-$(ARCH)\e[0m\n"; \
+			printf "\e[33mDone netsurf $(OS)-$(ARCH) (versioned)\e[0m\n"; \
+		elif curl -fL $(DEPS_RELEASE_URL_ALIAS)/netsurf.tar.gz | tar -xzf - -C $(BC_NS); then \
+			printf "\e[33mDone netsurf $(OS)-$(ARCH) (alias)\e[0m\n"; \
 		else \
 			printf "\e[33mDownload failed, building from source...\e[0m\n"; \
 			$(MAKE) build-netsurf; \
@@ -227,7 +234,9 @@ install-libiconv:
 		printf "\e[36mDownloading pre-built libiconv for $(OS)-$(ARCH)...\e[0m\n"; \
 		mkdir -p $(ICONV); \
 		if curl -fL $(DEPS_RELEASE_URL)/libiconv.tar.gz | tar -xzf - -C $(ICONV); then \
-			printf "\e[33mDone libiconv $(OS)-$(ARCH)\e[0m\n"; \
+			printf "\e[33mDone libiconv $(OS)-$(ARCH) (versioned)\e[0m\n"; \
+		elif curl -fL $(DEPS_RELEASE_URL_ALIAS)/libiconv.tar.gz | tar -xzf - -C $(ICONV); then \
+			printf "\e[33mDone libiconv $(OS)-$(ARCH) (alias)\e[0m\n"; \
 		else \
 			printf "\e[33mDownload failed, building from source...\e[0m\n"; \
 			$(MAKE) build-libiconv; \
@@ -267,7 +276,9 @@ install-mimalloc-dev:
 		printf "\e[36mDownloading pre-built mimalloc for $(OS)-$(ARCH)...\e[0m\n"; \
 		mkdir -p $(MIMALLOC); \
 		if curl -fL $(DEPS_RELEASE_URL)/mimalloc.tar.gz | tar -xzf - -C $(MIMALLOC); then \
-			printf "\e[33mDone mimalloc $(OS)-$(ARCH)\e[0m\n"; \
+			printf "\e[33mDone mimalloc $(OS)-$(ARCH) (versioned)\e[0m\n"; \
+		elif curl -fL $(DEPS_RELEASE_URL_ALIAS)/mimalloc.tar.gz | tar -xzf - -C $(MIMALLOC); then \
+			printf "\e[33mDone mimalloc $(OS)-$(ARCH) (alias)\e[0m\n"; \
 		else \
 			printf "\e[33mDownload failed, building from source...\e[0m\n"; \
 			$(MAKE) build-mimalloc-dev; \
@@ -281,7 +292,9 @@ install-mimalloc:
 		printf "\e[36mDownloading pre-built mimalloc for $(OS)-$(ARCH)...\e[0m\n"; \
 		mkdir -p $(MIMALLOC); \
 		if curl -fL $(DEPS_RELEASE_URL)/mimalloc.tar.gz | tar -xzf - -C $(MIMALLOC); then \
-			printf "\e[33mDone mimalloc $(OS)-$(ARCH)\e[0m\n"; \
+			printf "\e[33mDone mimalloc $(OS)-$(ARCH) (versioned)\e[0m\n"; \
+		elif curl -fL $(DEPS_RELEASE_URL_ALIAS)/mimalloc.tar.gz | tar -xzf - -C $(MIMALLOC); then \
+			printf "\e[33mDone mimalloc $(OS)-$(ARCH) (alias)\e[0m\n"; \
 		else \
 			printf "\e[33mDownload failed, building from source...\e[0m\n"; \
 			$(MAKE) build-mimalloc; \
@@ -337,18 +350,19 @@ clean-v8:
 # -----------------------------------------
 CURL_IMP := $(BC)vendor/curl-impersonate/out/$(OS)-$(ARCH)
 CURL_IMP_BUILD := $(BC)vendor/curl-impersonate/build
-CURL_IMP_VERSION := $(shell cd $(BC)vendor/curl-impersonate && git fetch --tags 2>/dev/null; git describe --tags 2>/dev/null || git rev-parse --short HEAD)
-CURL_IMP_RELEASE_URL := https://github.com/unstableneutron/lightpanda-browser-impersonate/releases/download/curl-impersonate-$(CURL_IMP_VERSION)
+CURL_IMP_RELEASE_URL := $(DEPS_RELEASE_URL)
 
 ## Install curl-impersonate: tries download, falls back to build
 install-curl-impersonate:
 	@if [ -f "$(CURL_IMP)/lib/libcurl-impersonate.a" ]; then \
 		printf "\e[33mcurl-impersonate already installed at $(CURL_IMP)\e[0m\n"; \
 	else \
-		printf "\e[36mDownloading pre-built curl-impersonate $(CURL_IMP_VERSION) for $(OS)-$(ARCH)...\e[0m\n"; \
+		printf "\e[36mDownloading pre-built curl-impersonate for $(OS)-$(ARCH)...\e[0m\n"; \
 		mkdir -p $(CURL_IMP); \
-		if curl -fL $(CURL_IMP_RELEASE_URL)/curl-impersonate-$(OS)-$(ARCH).tar.gz | tar -xzf - -C $(CURL_IMP); then \
-			printf "\e[33mDone curl-impersonate $(OS)-$(ARCH)\e[0m\n"; \
+		if curl -fL $(DEPS_RELEASE_URL)/curl-impersonate.tar.gz | tar -xzf - -C $(CURL_IMP); then \
+			printf "\e[33mDone curl-impersonate $(OS)-$(ARCH) (versioned)\e[0m\n"; \
+		elif curl -fL $(DEPS_RELEASE_URL_ALIAS)/curl-impersonate.tar.gz | tar -xzf - -C $(CURL_IMP); then \
+			printf "\e[33mDone curl-impersonate $(OS)-$(ARCH) (alias)\e[0m\n"; \
 		else \
 			printf "\e[33mDownload failed, building from source...\e[0m\n"; \
 			$(MAKE) build-curl-impersonate; \

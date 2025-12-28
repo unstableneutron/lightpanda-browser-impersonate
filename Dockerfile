@@ -9,66 +9,6 @@ ARG V8=14.0.365.4
 ARG ZIG_V8=v0.1.34
 
 # ==============================================================================
-# Stage: curl-impersonate-builder
-# Builds curl-impersonate with patched BoringSSL for TLS fingerprinting
-# ==============================================================================
-FROM debian:stable-slim AS curl-impersonate-builder
-
-ARG TARGETPLATFORM
-ARG USE_CURL_IMPERSONATE
-
-# Only build if USE_CURL_IMPERSONATE is enabled
-RUN if [ "$USE_CURL_IMPERSONATE" = "0" ]; then \
-        echo "Skipping curl-impersonate build" && \
-        mkdir -p /out/lib /out/include && \
-        exit 0; \
-    fi && \
-    apt-get update && \
-    apt-get install -y \
-        git ninja-build cmake autoconf automake pkg-config libtool \
-        clang llvm lld libc++-dev libc++abi-dev \
-        ca-certificates curl \
-        zlib1g-dev libzstd-dev libidn2-dev libldap-dev \
-        golang-go bzip2 xz-utils unzip make
-
-WORKDIR /build
-
-# Clone curl-impersonate (or copy from submodule if using local build)
-RUN if [ "$USE_CURL_IMPERSONATE" = "1" ]; then \
-        git clone --depth 1 https://github.com/lexiforest/curl-impersonate.git . ; \
-    fi
-
-ENV CC=clang CXX=clang++
-
-# Build curl-impersonate (static libraries only)
-RUN if [ "$USE_CURL_IMPERSONATE" = "1" ]; then \
-        mkdir -p /build/build /out/lib /out/include && \
-        cd /build/build && \
-        ../configure --prefix=/out --enable-static \
-            --with-zlib --with-zstd \
-            --with-ca-path=/etc/ssl/certs \
-            --with-ca-bundle=/etc/ssl/certs/ca-certificates.crt && \
-        make build && \
-        # Copy static libraries to output directory
-        cp /build/build/curl-*/lib/.libs/libcurl-impersonate.a /out/lib/ 2>/dev/null || \
-            cp /build/build/curl-*/src/.libs/libcurl-impersonate.a /out/lib/ && \
-        cp /build/build/boringssl-*/lib/libssl.a /out/lib/ && \
-        cp /build/build/boringssl-*/lib/libcrypto.a /out/lib/ && \
-        cp /build/build/nghttp2-*/installed/lib/libnghttp2.a /out/lib/ && \
-        cp /build/build/ngtcp2-*/installed/lib/libngtcp2.a /out/lib/ && \
-        cp /build/build/ngtcp2-*/installed/lib/libngtcp2_crypto_boringssl.a /out/lib/ && \
-        cp /build/build/nghttp3-*/installed/lib/libnghttp3.a /out/lib/ && \
-        cp /build/build/c-ares-*/installed/lib/libcares.a /out/lib/ && \
-        cp /build/build/brotli-*/out/installed/lib/libbrotlidec.a /out/lib/ && \
-        cp /build/build/brotli-*/out/installed/lib/libbrotlicommon.a /out/lib/ && \
-        # Copy headers
-        cp -r /build/build/curl-*/include/curl /out/include/ && \
-        cp -r /build/build/boringssl-*/include/openssl /out/include/ ; \
-    else \
-        mkdir -p /out/lib /out/include ; \
-    fi
-
-# ==============================================================================
 # Stage: lightpanda-builder
 # Builds the Lightpanda browser binary
 # ==============================================================================
@@ -87,7 +27,7 @@ RUN apt-get update -yq && \
         pkg-config libglib2.0-dev \
         gperf libexpat1-dev \
         cmake clang \
-        curl git \
+        curl git make \
         # Additional deps for curl-impersonate linking
         zlib1g-dev libzstd-dev libidn2-dev libldap-dev
 
@@ -95,12 +35,11 @@ RUN apt-get update -yq && \
 RUN curl --fail -L -O https://github.com/jedisct1/minisign/releases/download/${MINISIG}/minisign-${MINISIG}-linux.tar.gz && \
     tar xvzf minisign-${MINISIG}-linux.tar.gz -C /
 
-# Copy local source files (excluding .git and build artifacts via .dockerignore)
 WORKDIR /browser
-COPY build.zig build.zig.zon Makefile ./
-COPY src/ src/
+
+# Copy only build files and vendor first (for better layer caching)
+COPY Makefile build.zig build.zig.zon ./
 COPY vendor/ vendor/
-COPY tests/ tests/
 
 # Install zig
 RUN ZIG=$(grep '\.minimum_zig_version = "' "build.zig.zon" | cut -d'"' -f2) && \
@@ -118,7 +57,8 @@ RUN ZIG=$(grep '\.minimum_zig_version = "' "build.zig.zon" | cut -d'"' -f2) && \
 # Install deps (vendor dirs already copied)
 RUN make install-libiconv && \
     make install-netsurf && \
-    make install-mimalloc
+    make install-mimalloc && \
+    if [ "$USE_CURL_IMPERSONATE" = "1" ]; then make install-curl-impersonate; fi
 
 # Download and install v8
 RUN case $TARGETPLATFORM in \
@@ -129,20 +69,9 @@ RUN case $TARGETPLATFORM in \
     mkdir -p v8/ && \
     mv libc_v8.a v8/libc_v8.a
 
-# Copy curl-impersonate artifacts if enabled
-COPY --from=curl-impersonate-builder /out /curl-impersonate-out
-
-# Set up curl-impersonate libs in the expected location
-RUN case $TARGETPLATFORM in \
-        "linux/arm64") ARCH="aarch64" ;; \
-        *) ARCH="x86_64" ;; \
-    esac && \
-    if [ "$USE_CURL_IMPERSONATE" = "1" ]; then \
-        mkdir -p vendor/curl-impersonate/out/linux-${ARCH}/lib && \
-        mkdir -p vendor/curl-impersonate/out/linux-${ARCH}/include && \
-        cp -r /curl-impersonate-out/lib/* vendor/curl-impersonate/out/linux-${ARCH}/lib/ && \
-        cp -r /curl-impersonate-out/include/* vendor/curl-impersonate/out/linux-${ARCH}/include/ ; \
-    fi
+# Copy source files (after deps for better caching)
+COPY src/ src/
+COPY tests/ tests/
 
 # Build release (with or without curl-impersonate)
 ARG GIT_COMMIT=unknown
