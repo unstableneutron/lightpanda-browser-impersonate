@@ -106,6 +106,7 @@ end2end:
 # Pattern: install-X tries download first, falls back to build
 #          build-X always builds from source
 .PHONY: install-submodule
+.PHONY: install-v8 clean-v8
 .PHONY: install-libiconv build-libiconv clean-libiconv
 .PHONY: install-netsurf build-netsurf clean-netsurf test-netsurf
 .PHONY: install-mimalloc build-mimalloc clean-mimalloc
@@ -116,10 +117,10 @@ end2end:
 DEPS_RELEASE_URL := https://github.com/unstableneutron/lightpanda-browser-impersonate/releases/download/deps-$(OS)-$(ARCH)
 
 ## Install and build dependencies for release
-install: install-submodule install-libiconv install-netsurf install-mimalloc install-curl-impersonate
+install: install-submodule install-v8 install-libiconv install-netsurf install-mimalloc install-curl-impersonate
 
 ## Install and build dependencies for dev
-install-dev: install-submodule install-libiconv install-netsurf-dev install-mimalloc-dev install-curl-impersonate
+install-dev: install-submodule install-v8 install-libiconv install-netsurf-dev install-mimalloc-dev install-curl-impersonate
 
 BC_NS := $(BC)vendor/netsurf/out/$(OS)-$(ARCH)
 ICONV := $(BC)vendor/libiconv/out/$(OS)-$(ARCH)
@@ -306,6 +307,26 @@ clean-mimalloc:
 install-submodule:
 	@git submodule init && \
 	git submodule update
+
+# v8 (pre-built from zig-v8-fork)
+# -------------------------------
+V8_VERSION := 14.0.365.4
+ZIG_V8_VERSION := v0.1.35
+V8_RELEASE_URL := https://github.com/lightpanda-io/zig-v8-fork/releases/download/$(ZIG_V8_VERSION)
+
+install-v8:
+	@if [ -f "v8/libc_v8.a" ]; then \
+		printf "\e[33mv8 already installed\e[0m\n"; \
+	else \
+		printf "\e[36mDownloading v8 $(V8_VERSION) for $(OS)-$(ARCH)...\e[0m\n"; \
+		mkdir -p v8; \
+		curl -fL $(V8_RELEASE_URL)/libc_v8_$(V8_VERSION)_$(OS)_$(ARCH).a -o v8/libc_v8.a || \
+			(printf "\e[31mFailed to download v8\e[0m\n"; exit 1); \
+		printf "\e[33mDone v8\e[0m\n"; \
+	fi
+
+clean-v8:
+	@rm -rf v8
 
 # curl-impersonate (for TLS fingerprinting)
 # -----------------------------------------
