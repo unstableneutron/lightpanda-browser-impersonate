@@ -6,5 +6,4 @@ zig-out
 /vendor/libiconv/
 lightpanda.id
 /v8/
-bot-test/node_modules/
 node_modules/

@@ -1,0 +1,26 @@
+{
+  "name": "fingerprint-diagnostics",
+  "version": "1.0.0",
+  "description": "Manual diagnostics for browser fingerprinting and bot detection",
+  "type": "module",
+  "scripts": {
+    "bot-detection": "bun run src/bot-detection.ts",
+    "ua-check": "bun run src/ua-check.ts",
+    "all": "bun run src/bot-detection.ts && bun run src/ua-check.ts",
+    "lint": "oxlint --type-aware src/",
+    "fmt": "oxfmt src/",
+    "fmt:check": "oxfmt --check src/",
+    "check": "bun run lint && bun run fmt:check"
+  },
+  "keywords": ["fingerprint", "bot-detection", "diagnostics"],
+  "license": "AGPL-3.0",
+  "dependencies": {
+    "puppeteer-core": "^24.34.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "oxfmt": "latest",
+    "oxlint": "latest",
+    "oxlint-tsgolint": "latest"
+  }
+}
