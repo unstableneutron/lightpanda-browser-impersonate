@@ -183,6 +183,11 @@
   }
 </script>
 
+<script id=chrome>
+testing.expectEqual('object', typeof window.chrome);
+testing.expectEqual(window.chrome, window.chrome);
+</script>
+
 <script id=screen>
   testing.expectEqual(1920, screen.width);
   testing.expectEqual(1080, screen.height);

@@ -27,6 +27,10 @@
   testing.expectEqual('Gecko', navigator.product);
   testing.expectEqual(false, navigator.javaEnabled());
   testing.expectEqual(false, navigator.webdriver);
+  testing.expectEqual(5, navigator.plugins.length);
+  testing.expectEqual(true, navigator.plugins[0] instanceof Plugin);
+  testing.expectEqual(navigator.plugins[0], navigator.plugins.item(0));
+  testing.expectEqual(null, navigator.plugins.item(99));
 </script>
 
 <script id=permission_query type=module>
@@ -121,4 +125,3 @@
     }
   }
 </script>
-
