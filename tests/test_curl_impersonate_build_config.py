@@ -31,10 +31,31 @@ def test_release_workflow_uses_available_static_release_runners() -> None:
     release = read(".github/workflows/release.yml")
     install = read(".github/actions/install/action.yml")
 
-    assert "macos-13" in release
+    assert "ubuntu-24.04" in release
+    assert "ubuntu-24.04-arm" in release
+    assert "ubuntu-22.04" not in release
+    assert "ubuntu-22.04-arm" not in release
+    assert "macos-15" in release
+    assert "macos-15-intel" in release
+    assert "macos-13" not in release
     assert "macos-14-large" not in release
     assert "HOMEBREW_NO_AUTO_UPDATE=1" in install
     assert "brew update" not in install
+    assert "cache-key:" in install
+    assert "cache-size-limit:" in install
+    assert "inputs.os" in install
+    assert "inputs.arch" in install
+    assert "inputs.curl-impersonate" in install
+
+
+def test_curl_impersonate_archive_does_not_bundle_duplicate_idn_libraries() -> None:
+    build = read("build.zig")
+
+    assert "const libidn2 = buildLibidn2" in build
+    assert "mod.linkLibrary(libidn2)" in build
+    assert "libidn2*/installed/lib/lib*.a" not in build
+    assert "libunistring*/installed/lib/lib*.a" not in build
+    assert "libidn2.a libunistring.a" not in build
 
 
 def test_build_zig_uses_curl_impersonate_as_an_isolated_build_artifact() -> None:

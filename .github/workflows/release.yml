@@ -30,10 +30,10 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            runner: ubuntu-22.04
+            runner: ubuntu-24.04
             cpu_flag: -Dcpu=x86_64
           - arch: aarch64
-            runner: ubuntu-22.04-arm
+            runner: ubuntu-24.04-arm
             cpu_flag: -Dcpu=generic
 
     env:
@@ -89,12 +89,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macos-14 runs on arm CPU. see
-          # https://github.com/actions/runner-images?tab=readme-ov-file
+          # Use explicit current macOS images so the Intel job is not queued on
+          # deprecated/low-capacity labels and the ARM job stays reproducible.
           - arch: aarch64
-            runner: macos-14
+            runner: macos-15
           - arch: x86_64
-            runner: macos-13
+            runner: macos-15-intel
 
     env:
       ARCH: ${{ matrix.arch }}

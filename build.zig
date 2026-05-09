@@ -780,9 +780,6 @@ fn buildCurlImpersonateArtifact(b: *Build) Build.LazyPath {
         \\lib_list="libcurl-impersonate.orig.a libz.a libzstd.a libbrotlidec.a libbrotlicommon.a libbrotlienc.a libnghttp2.a libnghttp3.a libngtcp2.a libngtcp2_crypto_boringssl.a libssl.a libcrypto.a"
         \\case "$(uname -s)" in
         \\  Linux)
-        \\    cp "$src"/libidn2*/installed/lib/lib*.a .
-        \\    cp "$src"/libunistring*/installed/lib/lib*.a .
-        \\    lib_list="$lib_list libidn2.a libunistring.a"
         \\    ${CC:-cc} -r -o libcurl-impersonate.full.o -Wl,--whole-archive $lib_list -Wl,--no-whole-archive
         \\    ar rcs libcurl-impersonate.a libcurl-impersonate.full.o
         \\    rm -f libcurl-impersonate.full.o
@@ -796,7 +793,7 @@ fn buildCurlImpersonateArtifact(b: *Build) Build.LazyPath {
         \\    ;;
         \\esac
         \\
-        \\rm -f libcurl-impersonate.orig.a libz.a libzstd.a libbrotlidec.a libbrotlicommon.a libbrotlienc.a libnghttp2.a libnghttp3.a libngtcp2.a libngtcp2_crypto_boringssl.a libssl.a libcrypto.a libidn2.a libunistring.a
+        \\rm -f libcurl-impersonate.orig.a libz.a libzstd.a libbrotlidec.a libbrotlicommon.a libbrotlienc.a libnghttp2.a libnghttp3.a libngtcp2.a libngtcp2_crypto_boringssl.a libssl.a libcrypto.a
         \\
         ,
         "build-curl-impersonate",

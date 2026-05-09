@@ -56,8 +56,14 @@ runs:
       run: |
         HOMEBREW_NO_AUTO_UPDATE=1 brew install autoconf automake cmake go libtool make ninja pkg-config
 
-    # Zig version used from the `minimum_zig_version` field in build.zig.zon
+    # Zig version used from the `minimum_zig_version` field in build.zig.zon.
+    # setup-zig preserves Zig's global/local caches; include non-runner matrix
+    # inputs so native curl-impersonate build artifacts do not collide across
+    # release jobs.
     - uses: mlugg/setup-zig@v2
+      with:
+        cache-key: lightpanda-${{ inputs.os }}-${{ inputs.arch }}-curlimp-${{ inputs.curl-impersonate }}-debug-${{ inputs.debug }}
+        cache-size-limit: 4096
 
     # Rust Toolchain for html5ever
     - uses: dtolnay/rust-toolchain@stable
