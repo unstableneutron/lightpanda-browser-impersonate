@@ -31,8 +31,8 @@
             .hash = "N-V-__8AALp9QAGn6CCHZ6fK_FfMyGtG824LSHYHHasM3w-y",
         },
         .curl_impersonate = .{
-            .url = "https://github.com/unstableneutron/curl-impersonate/archive/bf7d25e39a55f7122a349e207d2b3da1d903629c.tar.gz",
-            .hash = "N-V-__8AALeIEwDadVPCqKbEq8qGpSj00kKVgz2SssAUWmPA",
+            .url = "https://github.com/unstableneutron/curl-impersonate/archive/e56e9e735b76d814217845d76fa328dc183225c9.tar.gz",
+            .hash = "N-V-__8AABmKEwBEozoMLXlfZybtYM3C30tcnyNukWAVhtsu",
         },
         .curl_impersonate_curl = .{
             .url = "https://github.com/curl/curl/archive/refs/tags/curl-8_15_0.tar.gz",

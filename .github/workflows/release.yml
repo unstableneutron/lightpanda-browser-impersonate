@@ -94,7 +94,7 @@ jobs:
           - arch: aarch64
             runner: macos-14
           - arch: x86_64
-            runner: macos-14-large
+            runner: macos-13
 
     env:
       ARCH: ${{ matrix.arch }}
