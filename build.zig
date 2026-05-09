@@ -21,6 +21,8 @@ const builtin = @import("builtin");
 
 const lightpanda_version = std.SemanticVersion.parse(@import("build.zig.zon").version) catch unreachable;
 const min_zig_version = std.SemanticVersion.parse(@import("build.zig.zon").minimum_zig_version) catch unreachable;
+const curl_impersonate_release_tag = "v1.5.6-lightpanda.wsstartframe.1";
+const curl_impersonate_version_metadata = "curl-impersonate-" ++ curl_impersonate_release_tag;
 
 const Build = blk: {
     if (builtin.zig_version.order(min_zig_version) == .lt) {
@@ -45,7 +47,7 @@ pub fn build(b: *Build) !void {
     const use_curl_impersonate = b.option(bool, "use_curl_impersonate", "Use curl-impersonate fork release artifacts") orelse false;
     const curl_impersonate_source_build = b.option(bool, "curl_impersonate_source_build", "Build curl-impersonate from source instead of using release artifacts") orelse false;
 
-    const version = resolveVersion(b);
+    const version = resolveVersion(b, use_curl_impersonate);
     var stdout = std.fs.File.stdout().writer(&.{});
     try stdout.interface.print("Lightpanda {f}\n", .{version});
 
@@ -416,7 +418,7 @@ fn curlImpersonatePrebuiltArtifact(b: *Build, target: Build.ResolvedTarget) Buil
     const os = target.result.os.tag;
     const arch = target.result.cpu.arch;
     const abi = target.result.abi;
-    const tag = "v1.5.6-lightpanda.wsstartframe.1";
+    const tag = curl_impersonate_release_tag;
 
     const host, const sha256 = switch (os) {
         .linux => blk: {
@@ -1211,42 +1213,74 @@ fn buildCurl(
 ///
 /// The base version is read from `build.zig.zon`. This can be overridden
 /// using the `-Dversion` command-line flag:
-/// - If the flag contains a full semantic version (e.g., `1.2.3`), it replaces
-///   the base version entirely.
+/// - If the flag contains a full semantic version (e.g., `0.2.9-dev.6106`), it
+///   replaces the base version entirely.
 /// - If the flag contains a simple string (e.g., `nightly`), it replaces only
-///   the pre-release tag of the base version (e.g., `1.0.0-dev` -> `1.0.0-nightly`).
+///   the pre-release tag of the base version (e.g., `0.2.9-dev` -> `0.2.9-nightly`).
 ///
-/// For versions that have a pre-release tag and no explicit build metadata,
-/// this function automatically enriches the version with the git commit count
-/// and short hash (e.g., `1.0.0-dev.5243+dbe45229`).
-fn resolveVersion(b: *std.Build) std.SemanticVersion {
+/// Unflagged dev/nightly versions are enriched with the git commit count and
+/// short hash (e.g., `0.2.9-dev.5243+dbe45229`). Explicit semantic versions are
+/// not commit-count enriched, so short release tags remain short.
+///
+/// curl-impersonate builds always append the exact fork release tag to build
+/// metadata unless the caller already supplied curl-impersonate metadata.
+fn resolveVersion(b: *std.Build, use_curl_impersonate: bool) std.SemanticVersion {
     const opt_version = b.option([]const u8, "version", "Override the version of this build");
 
-    const version = if (opt_version) |v|
+    var should_enrich = false;
+    var version = if (opt_version) |v|
         std.SemanticVersion.parse(v) catch blk: {
             var fallback = lightpanda_version;
             fallback.pre = v;
+            should_enrich = true;
             break :blk fallback;
         }
-    else
-        lightpanda_version;
+    else blk: {
+        should_enrich = true;
+        break :blk lightpanda_version;
+    };
 
-    // Only enrich versions that have a pre-release field and no explicit build metadata.
-    if (version.pre == null or version.build != null) return version;
+    if (should_enrich and version.pre != null and version.build == null) {
+        const git_hash_raw = runGit(b, &.{ "rev-parse", "--short", "HEAD" }) catch return withCurlImpersonateMetadata(b, version, use_curl_impersonate);
+        const commit_hash = std.mem.trim(u8, git_hash_raw, " \n\r");
 
-    // For dev/nightly versions, calculate the commit count and hash
-    const git_hash_raw = runGit(b, &.{ "rev-parse", "--short", "HEAD" }) catch return version;
-    const commit_hash = std.mem.trim(u8, git_hash_raw, " \n\r");
+        const git_count_raw = runGit(b, &.{ "rev-list", "--count", "HEAD" }) catch return withCurlImpersonateMetadata(b, version, use_curl_impersonate);
+        const commit_count = std.mem.trim(u8, git_count_raw, " \n\r");
 
-    const git_count_raw = runGit(b, &.{ "rev-list", "--count", "HEAD" }) catch return version;
-    const commit_count = std.mem.trim(u8, git_count_raw, " \n\r");
+        version = .{
+            .major = version.major,
+            .minor = version.minor,
+            .patch = version.patch,
+            .pre = b.fmt("{s}.{s}", .{ version.pre.?, commit_count }),
+            .build = commit_hash,
+        };
+    }
 
+    return withCurlImpersonateMetadata(b, version, use_curl_impersonate);
+}
+
+fn withCurlImpersonateMetadata(
+    b: *std.Build,
+    version: std.SemanticVersion,
+    use_curl_impersonate: bool,
+) std.SemanticVersion {
+    if (!use_curl_impersonate) return version;
+    if (version.build) |build_metadata| {
+        if (std.mem.indexOf(u8, build_metadata, "curl-impersonate-") != null) return version;
+        return .{
+            .major = version.major,
+            .minor = version.minor,
+            .patch = version.patch,
+            .pre = version.pre,
+            .build = b.fmt("{s}.{s}", .{ build_metadata, curl_impersonate_version_metadata }),
+        };
+    }
     return .{
         .major = version.major,
         .minor = version.minor,
         .patch = version.patch,
-        .pre = b.fmt("{s}.{s}", .{ version.pre.?, commit_count }),
-        .build = commit_hash,
+        .pre = version.pre,
+        .build = curl_impersonate_version_metadata,
     };
 }
 

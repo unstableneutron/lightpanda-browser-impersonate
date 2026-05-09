@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -6,6 +7,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def read(path: str) -> str:
     return (ROOT / path).read_text()
+
+
+def test_build_zon_uses_0_2_9_dev_base_version() -> None:
+    zon = read("build.zig.zon")
+
+    assert '.version = "0.2.9-dev"' in zon
+    assert '.version = "1.0.0-dev"' not in zon
 
 
 def test_build_zon_pins_curl_impersonate_sources_for_source_build_fallback() -> None:
@@ -27,6 +35,15 @@ def test_build_zig_exposes_curl_impersonate_build_options() -> None:
     assert "curl_impersonate_source_build" in build
     assert "Build curl-impersonate from source instead of using release artifacts" in build
     assert "if (use_curl_impersonate)" in build
+
+
+def test_release_workflow_uses_short_tag_as_release_version() -> None:
+    release = read(".github/workflows/release.yml")
+
+    assert "VERSION_FLAG: ${{ github.ref_type == 'tag' && format('-Dversion={0}', github.ref_name) || '-Dversion=nightly' }}" in release
+    assert "CURL_IMPERSONATE_VERSION" not in release
+    assert "+curlimp" not in release
+    assert "+curl-impersonate" not in release
 
 
 def test_release_workflow_uses_available_static_release_runners() -> None:
@@ -71,7 +88,10 @@ def test_build_zig_uses_curl_impersonate_release_archives_by_default() -> None:
     tag = "v1.5.6-lightpanda.wsstartframe.1"
     assert "fn linkCurlImpersonate(" in build
     assert "fn curlImpersonatePrebuiltArtifact(" in build
-    assert tag in build
+    assert f'const curl_impersonate_release_tag = "{tag}";' in build
+    assert f'const curl_impersonate_version_metadata = "curl-impersonate-" ++ curl_impersonate_release_tag;' in build
+    assert 'const tag = curl_impersonate_release_tag;' in build
+    assert len(re.findall(tag, build)) == 1
     assert f"libcurl-impersonate-{{s}}.{{s}}.tar.gz" in build
     for host in (
         "x86_64-linux-gnu",
@@ -92,6 +112,17 @@ def test_build_zig_uses_curl_impersonate_release_archives_by_default() -> None:
     assert "shasum -a 256 -c -" in build
     assert "libcurl-impersonate.a" in build
     assert "mod.addObjectFile" in build
+
+
+def test_build_zig_embeds_curl_impersonate_version_metadata() -> None:
+    build = read("build.zig")
+
+    assert "resolveVersion(b, use_curl_impersonate)" in build
+    assert "fn withCurlImpersonateMetadata(" in build
+    assert "curl_impersonate_version_metadata" in build
+    assert "curl-impersonate-" in build
+    assert "Explicit semantic versions are" in build
+    assert "not commit-count enriched" in build
 
 
 def test_build_zig_keeps_curl_impersonate_source_build_as_fallback() -> None:
