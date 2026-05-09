@@ -87,6 +87,7 @@ const CommonOptions = .{
     .{ .name = "log_format", .type = ?log.Format },
     .{ .name = "log_filter_scopes", .type = log.Scope, .multiple = true, .validator = logFilterScopesValidator },
     .{ .name = "user_agent_suffix", .type = ?[]const u8 },
+    .{ .name = "impersonate", .type = ?[:0]const u8 },
     .{ .name = "http_cache_dir", .type = ?[]const u8 },
     .{ .name = "web_bot_auth_key_file", .type = ?[]const u8 },
     .{ .name = "web_bot_auth_keyid", .type = ?[]const u8 },
@@ -183,12 +184,14 @@ pub const Mode = Commands.Union;
 
 mode: Mode,
 exec_name: []const u8,
+impersonate_profile: ?[:0]const u8,
 http_headers: HttpHeaders,
 
 pub fn init(allocator: Allocator, exec_name: []const u8, mode: Mode) !Config {
     var config = Config{
         .mode = mode,
         .exec_name = exec_name,
+        .impersonate_profile = try resolveImpersonateProfile(allocator, mode),
         .http_headers = undefined,
     };
     config.http_headers = try HttpHeaders.init(allocator, &config);
@@ -306,6 +309,38 @@ pub fn userAgent(self: *const Config) ?[]const u8 {
         inline .serve, .fetch, .mcp => |opts| opts.user_agent,
         .help, .version => null,
     };
+}
+
+pub fn impersonateProfile(self: *const Config) ?[:0]const u8 {
+    return self.impersonate_profile;
+}
+
+fn resolveImpersonateProfile(allocator: Allocator, mode: Mode) !?[:0]const u8 {
+    const cli_profile = switch (mode) {
+        inline .serve, .fetch, .mcp => |opts| opts.impersonate,
+        .help, .version => null,
+    };
+    if (cli_profile) |profile| return normalizeImpersonateProfile(allocator, profile);
+
+    const env = std.process.getEnvVarOwned(allocator, "LIGHTPANDA_IMPERSONATE") catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => return null,
+        else => return err,
+    };
+    defer allocator.free(env);
+    return normalizeImpersonateProfile(allocator, env);
+}
+
+fn normalizeImpersonateProfile(allocator: Allocator, profile: []const u8) !?[:0]const u8 {
+    const trimmed = std.mem.trim(u8, profile, &std.ascii.whitespace);
+    if (trimmed.len == 0 or
+        std.ascii.eqlIgnoreCase(trimmed, "none") or
+        std.ascii.eqlIgnoreCase(trimmed, "default") or
+        std.ascii.eqlIgnoreCase(trimmed, "lightpanda"))
+    {
+        return null;
+    }
+
+    return try allocator.dupeZ(u8, trimmed);
 }
 
 pub fn httpCacheDir(self: *const Config) ?[]const u8 {
@@ -448,6 +483,7 @@ pub const HttpHeaders = struct {
 
     user_agent: [:0]const u8, // User agent value (e.g. "Lightpanda/1.0")
     user_agent_header: [:0]const u8,
+    impersonated: bool,
 
     proxy_bearer_header: ?[:0]const u8,
 
@@ -471,6 +507,7 @@ pub const HttpHeaders = struct {
         return .{
             .user_agent = user_agent,
             .user_agent_header = user_agent_header,
+            .impersonated = config.impersonateProfile() != null,
             .proxy_bearer_header = proxy_bearer_header,
         };
     }
@@ -572,6 +609,11 @@ pub fn printUsageAndExit(self: *const Config, success: bool) void {
         \\
         \\--user-agent-suffix
         \\                Suffix to append to the Lightpanda/X.Y User-Agent
+        \\
+        \\--impersonate   Browser profile to apply via curl-impersonate, e.g. chrome145.
+        \\                Also configurable with LIGHTPANDA_IMPERSONATE. The CLI flag
+        \\                takes precedence. Values none, default, and lightpanda disable it.
+        \\                When enabled, curl-impersonate owns browser-like default headers.
         \\
         \\--web-bot-auth-key-file
         \\                Path to the Ed25519 private key PEM file.

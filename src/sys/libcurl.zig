@@ -18,6 +18,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const build_config = @import("build_config");
 
 const c = @cImport({
     @cInclude("curl/curl.h");
@@ -227,6 +228,7 @@ pub const CurlOption = enum(c.CURLoption) {
     read_function = c.CURLOPT_READFUNCTION,
     connect_only = c.CURLOPT_CONNECT_ONLY,
     upload = c.CURLOPT_UPLOAD,
+    ws_options = c.CURLOPT_WS_OPTIONS,
     opensocket_function = c.CURLOPT_OPENSOCKETFUNCTION,
     opensocket_data = c.CURLOPT_OPENSOCKETDATA,
 };
@@ -583,6 +585,21 @@ pub fn curl_easy_reset(easy: *Curl) void {
     c.curl_easy_reset(easy);
 }
 
+fn curl_easy_impersonate_not_built(easy: *Curl, target: [:0]const u8, default_headers: bool) Error!void {
+    _ = easy;
+    _ = target;
+    _ = default_headers;
+    return Error.NotBuiltIn;
+}
+
+pub fn curl_easy_impersonate(easy: *Curl, target: [:0]const u8, default_headers: bool) Error!void {
+    if (comptime !build_config.use_curl_impersonate) {
+        return curl_easy_impersonate_not_built(easy, target, default_headers);
+    }
+
+    try errorCheck(c.curl_easy_impersonate(easy, target.ptr, @intFromBool(default_headers)));
+}
+
 pub fn curl_easy_perform(easy: *Curl) Error!void {
     try errorCheck(c.curl_easy_perform(easy));
 }
@@ -615,6 +632,7 @@ pub fn curl_easy_setopt(easy: *Curl, comptime option: CurlOption, value: anytype
         .follow_location,
         .post_field_size,
         .connect_only,
+        .ws_options,
         => blk: {
             const n: c_long = switch (@typeInfo(@TypeOf(value))) {
                 .comptime_int, .int => @intCast(value),
@@ -942,8 +960,11 @@ pub const WsFrameMeta = struct {
     offset: usize,
     bytes_left: usize,
     len: usize,
+    flags: c_uint,
+    continues: bool,
 
     fn from(frame: *const c.curl_ws_frame) WsFrameMeta {
+        const flags: c_uint = @bitCast(frame.flags);
         return .{
             .frame_type = WsFrameType.fromFlags(frame.flags),
             .offset = @intCast(frame.offset),
@@ -952,9 +973,13 @@ pub const WsFrameMeta = struct {
                 std.math.maxInt(usize)
             else
                 @intCast(frame.len),
+            .flags = flags,
+            .continues = flags & c.CURLWS_CONT != 0,
         };
     }
 };
+
+pub const curl_ws_no_auto_pong: c_long = c.CURLWS_NOAUTOPONG;
 
 pub fn curl_ws_send(easy: *Curl, buffer: []const u8, sent: *usize, fragsize: CurlOffT, frame_type: WsFrameType) Error!void {
     try errorCheck(c.curl_ws_send(easy, buffer.ptr, buffer.len, sent, fragsize, frame_type.toInt()));

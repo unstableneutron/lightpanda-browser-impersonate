@@ -26,6 +26,10 @@ inputs:
     description: 'enable v8 pre-built debug version, only available for linux x86_64'
     required: false
     default: 'false'
+  curl-impersonate:
+    description: 'install native build tools required by curl-impersonate'
+    required: false
+    default: 'false'
 
 runs:
   using: "composite"
@@ -37,6 +41,21 @@ runs:
       run: |
         sudo apt-get update
         sudo apt-get install -y wget xz-utils ca-certificates clang make git
+
+    - name: Install curl-impersonate apt deps
+      if: ${{ inputs.os == 'linux' && inputs.curl-impersonate == 'true' }}
+      shell: bash
+      run: |
+        sudo apt-get install -y \
+          autoconf automake bzip2 cmake curl golang-go libtool \
+          ninja-build pkg-config unzip
+
+    - name: Install curl-impersonate Homebrew deps
+      if: ${{ inputs.os == 'macos' && inputs.curl-impersonate == 'true' }}
+      shell: bash
+      run: |
+        brew update
+        brew install autoconf automake cmake go libtool make ninja pkg-config
 
     # Zig version used from the `minimum_zig_version` field in build.zig.zon
     - uses: mlugg/setup-zig@v2

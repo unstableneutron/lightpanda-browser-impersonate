@@ -62,10 +62,12 @@ _req_headers: http.Headers,
 _send_queue: std.ArrayList(Message) = .empty,
 _send_offset: usize = 0,
 
-// buffered incoming frame
+// buffered incoming frame payload and fragmented message payload
 _recv_buffer: std.ArrayList(u8) = .empty,
+_fragment_buffer: std.ArrayList(u8) = .empty,
+_fragment_type: ?http.WsFrameType = null,
 
-// close info for event dispatch
+// close info for event dispatch and close control frames
 _close_code: u16 = 1000,
 _close_reason: []const u8 = "",
 
@@ -124,6 +126,10 @@ pub fn init(url: []const u8, protocols: [][]const u8, frame: *Frame) !*WebSocket
 
     try conn.setURL(resolved_url);
     try conn.setConnectOnly(false);
+    // libcurl's built-in auto-pong only mirrors the current received chunk for
+    // chopped ping frames. Let Lightpanda reply after the complete ping payload
+    // has been delivered instead.
+    try conn.setWsAutoPong(false);
 
     try conn.setReadCallback(sendDataCallback, true);
     try conn.setWriteCallback(receivedDataCallback);
@@ -253,6 +259,25 @@ fn queueMessage(self: *WebSocket, msg: Message) !void {
     }
 }
 
+fn clearSendQueue(self: *WebSocket) void {
+    for (self._send_queue.items) |msg| {
+        msg.deinit(self._frame._page);
+    }
+    self._send_queue.clearRetainingCapacity();
+    self._send_offset = 0;
+}
+
+fn failWithClose(self: *WebSocket, code: u16) !void {
+    if (self._ready_state == .closing or self._ready_state == .closed) return;
+    self.clearSendQueue();
+    self._fragment_buffer.clearRetainingCapacity();
+    self._fragment_type = null;
+    self._ready_state = .closing;
+    self._close_code = code;
+    self._close_reason = "";
+    try self.queueMessage(.close);
+}
+
 fn isValidProtocol(protocol: []const u8) bool {
     if (protocol.len == 0) return false;
     for (protocol) |c| {
@@ -376,6 +401,7 @@ pub fn getBufferedAmount(self: *const WebSocket) u32 {
     for (self._send_queue.items) |msg| {
         switch (msg) {
             .text, .binary => |byte_msg| buffered += @intCast(byte_msg.data.len),
+            .pong => {},
             .close => buffered += @intCast(2 + self._close_reason.len),
         }
     }
@@ -534,12 +560,7 @@ fn _sendDataCallback(conn: *http.Connection, buf: []u8) !usize {
         .close => {
             const code = self._close_code;
             const reason = self._close_reason;
-
-            // Close frame: 2 bytes for code (big-endian) + optional reason
-            // Truncate reason to fit in buf (max 123 bytes per spec)
-            const reason_len: usize = @min(reason.len, 123, buf.len -| 2);
-            const frame_len = 2 + reason_len;
-            const to_copy = @min(buf.len, frame_len);
+            const reason_len: usize = @min(reason.len, 123);
 
             var close_payload: [125]u8 = undefined;
             close_payload[0] = @intCast((code >> 8) & 0xFF);
@@ -548,15 +569,32 @@ fn _sendDataCallback(conn: *http.Connection, buf: []u8) !usize {
                 @memcpy(close_payload[2..][0..reason_len], reason[0..reason_len]);
             }
 
-            try conn.wsStartFrame(.close, to_copy);
-            @memcpy(buf[0..to_copy], close_payload[0..to_copy]);
-
-            _ = self._send_queue.orderedRemove(0);
-            return to_copy;
+            return self.writeControl(conn, buf, close_payload[0 .. 2 + reason_len], .close);
         },
+        .pong => |payload| return self.writeControl(conn, buf, payload, .pong),
         .text => |content| return self.writeContent(conn, buf, content, .text),
         .binary => |content| return self.writeContent(conn, buf, content, .binary),
     }
+}
+
+fn writeControl(self: *WebSocket, conn: *http.Connection, buf: []u8, payload: []const u8, frame_type: http.WsFrameType) !usize {
+    if (self._send_offset == 0) {
+        try conn.wsStartFrame(frame_type, payload.len);
+    }
+
+    const remaining = payload[self._send_offset..];
+    const to_copy = @min(remaining.len, buf.len);
+    @memcpy(buf[0..to_copy], remaining[0..to_copy]);
+
+    self._send_offset += to_copy;
+
+    if (self._send_offset >= payload.len) {
+        const removed = self._send_queue.orderedRemove(0);
+        removed.deinit(self._frame._page);
+        self._send_offset = 0;
+    }
+
+    return to_copy;
 }
 
 fn writeContent(self: *WebSocket, conn: *http.Connection, buf: []u8, byte_msg: Message.Content, frame_type: http.WsFrameType) !usize {
@@ -610,49 +648,144 @@ fn _receivedDataCallback(conn: *http.Connection, data: []const u8) !void {
 
     if (meta.offset == 0) {
         if (comptime IS_DEBUG) {
-            log.debug(.websocket, "incoming message", .{ .url = self._url, .len = meta.len, .bytes_left = meta.bytes_left, .type = meta.frame_type });
+            log.debug(.websocket, "incoming frame", .{ .url = self._url, .len = meta.len, .bytes_left = meta.bytes_left, .type = meta.frame_type, .continues = meta.continues });
         }
-        // Start of new frame. Pre-allocate buffer
         self._recv_buffer.clearRetainingCapacity();
-        if (meta.len > self._http_client.max_response_size) {
-            return error.MessageTooLarge;
-        }
-        try self._recv_buffer.ensureTotalCapacity(self._arena, meta.len);
     }
 
+    const frame_len = meta.offset + data.len + meta.bytes_left;
+    if (frame_len > self._http_client.max_response_size) {
+        try self.failWithClose(1009);
+        return;
+    }
+    try self._recv_buffer.ensureTotalCapacity(self._arena, frame_len);
     try self._recv_buffer.appendSlice(self._arena, data);
 
     if (meta.bytes_left > 0) {
-        // still more data waiting for this frame
+        // Still more data waiting for this frame.
         return;
     }
 
-    const message = self._recv_buffer.items;
+    const payload = self._recv_buffer.items;
     switch (meta.frame_type) {
-        .text, .binary => try self.dispatchMessageEvent(message, meta.frame_type),
-        .close => {
-            // Parse close frame: 2-byte code (big-endian) + optional reason
-            const received_code = if (message.len >= 2)
-                @as(u16, message[0]) << 8 | message[1]
-            else
-                1005; // No status code received
-
-            if (self._ready_state == .closing) {
-                // Client-initiated close: this is the server's response.
-                // Close handshake complete - disconnect.
-                self.disconnected(null);
-            } else {
-                // Server-initiated close: send reciprocal close frame per RFC 6455 §5.5.1
-                self._close_code = received_code;
-                if (message.len > 2) {
-                    self._close_reason = try self._arena.dupe(u8, message[2..]);
-                }
-                self._ready_state = .closing;
-                try self.queueMessage(.close);
-            }
-        },
-        .ping, .pong, .cont => {},
+        .text, .binary, .cont => try self.handleDataFrame(payload, meta),
+        .ping => try self.handlePing(payload),
+        .pong => {},
+        .close => try self.handleCloseFrame(payload),
     }
+}
+
+fn handleDataFrame(self: *WebSocket, payload: []const u8, meta: http.WsFrameMeta) !void {
+    const frame_type = switch (meta.frame_type) {
+        .text, .binary => meta.frame_type,
+        .cont => self._fragment_type orelse {
+            try self.failWithClose(1002);
+            return;
+        },
+        else => unreachable,
+    };
+
+    if (meta.continues) {
+        if (self._fragment_type) |fragment_type| {
+            if (fragment_type != frame_type) {
+                try self.failWithClose(1002);
+                return;
+            }
+        } else {
+            self._fragment_type = frame_type;
+            self._fragment_buffer.clearRetainingCapacity();
+        }
+
+        if (self._fragment_buffer.items.len + payload.len > self._http_client.max_response_size) {
+            try self.failWithClose(1009);
+            return;
+        }
+        try self._fragment_buffer.appendSlice(self._arena, payload);
+        return;
+    }
+
+    if (self._fragment_type) |fragment_type| {
+        if (fragment_type != frame_type) {
+            try self.failWithClose(1002);
+            return;
+        }
+        if (self._fragment_buffer.items.len + payload.len > self._http_client.max_response_size) {
+            try self.failWithClose(1009);
+            return;
+        }
+        try self._fragment_buffer.appendSlice(self._arena, payload);
+        const message = self._fragment_buffer.items;
+        defer {
+            self._fragment_buffer.clearRetainingCapacity();
+            self._fragment_type = null;
+        }
+        try self.dispatchCompleteMessage(message, fragment_type);
+        return;
+    }
+
+    try self.dispatchCompleteMessage(payload, frame_type);
+}
+
+fn dispatchCompleteMessage(self: *WebSocket, message: []const u8, frame_type: http.WsFrameType) !void {
+    if (frame_type == .text and !std.unicode.utf8ValidateSlice(message)) {
+        try self.failWithClose(1007);
+        return;
+    }
+    try self.dispatchMessageEvent(message, frame_type);
+}
+
+fn handlePing(self: *WebSocket, payload: []const u8) !void {
+    const pong = try self._arena.dupe(u8, payload);
+    try self.queueMessage(.{ .pong = pong });
+}
+
+fn handleCloseFrame(self: *WebSocket, payload: []const u8) !void {
+    if (payload.len == 1) {
+        try self.failWithClose(1002);
+        return;
+    }
+
+    const received_code = if (payload.len >= 2)
+        @as(u16, payload[0]) << 8 | payload[1]
+    else
+        1000;
+    const reason = if (payload.len > 2) payload[2..] else "";
+
+    if (payload.len >= 2 and !isValidRemoteCloseCode(received_code)) {
+        try self.failWithClose(1002);
+        return;
+    }
+    if (!std.unicode.utf8ValidateSlice(reason)) {
+        try self.failWithClose(1007);
+        return;
+    }
+
+    if (self._ready_state == .closing) {
+        // If our close response is still queued, ignore duplicate peer close
+        // frames until libcurl has a chance to send the handshake response.
+        if (self._send_queue.items.len > 0) return;
+
+        // Client-initiated close: this is the server's response.
+        self._close_code = received_code;
+        self._close_reason = try self._arena.dupe(u8, reason);
+        self.disconnected(null);
+    } else {
+        // Server-initiated close: send reciprocal close frame per RFC 6455 §5.5.1.
+        self.clearSendQueue();
+        self._close_code = received_code;
+        self._close_reason = try self._arena.dupe(u8, reason);
+        self._ready_state = .closing;
+        try self.queueMessage(.close);
+    }
+}
+
+fn isValidRemoteCloseCode(code: u16) bool {
+    if (code >= 3000 and code <= 4999) return true;
+    if (code < 1000 or code > 1014) return false;
+    return switch (code) {
+        1004, 1005, 1006 => false,
+        else => true,
+    };
 }
 
 // libcurl has no mechanism to signal that the connection is established. The
@@ -712,6 +845,7 @@ fn receivedHeaderCallback(buffer: [*]const u8, header_count: usize, buf_len: usi
 
 const Message = union(enum) {
     close,
+    pong: []const u8,
     text: Content,
     binary: Content,
 
@@ -722,7 +856,7 @@ const Message = union(enum) {
     fn deinit(self: Message, page: *Page) void {
         switch (self) {
             .text, .binary => |msg| page.releaseArena(msg.arena),
-            .close => {},
+            .close, .pong => {},
         }
     }
 };

@@ -2,6 +2,7 @@
 /.lp-cache/
 /zig-pkg/
 zig-out
+/tests/autobahn/reports*/
 lightpanda.id
 /src/html5ever/target/
 src/snapshot.bin

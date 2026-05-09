@@ -372,6 +372,7 @@ pub fn Builder(comptime commands: anytype) type {
             /// };
             /// ```
             option: anytype,
+            inlineValue: ?[]const u8,
         ) !void {
             const kebab_cased = "--" ++ comptime toKebabCase(option.name);
 
@@ -381,6 +382,11 @@ pub fn Builder(comptime commands: anytype) type {
 
             // Prefer validator for parsing if provided.
             if (has_validator) {
+                if (inlineValue != null) {
+                    log.fatal(.app, "inline value unsupported", .{ .arg = kebab_cased });
+                    return error.InvalidArgument;
+                }
+
                 const validator = option.validator;
                 if (is_multiple) {
                     // Pass the list.
@@ -408,7 +414,7 @@ pub fn Builder(comptime commands: anytype) type {
                 .int => |int| {
                     const Int = std.meta.Int(int.signedness, int.bits);
 
-                    const str = args.next() orelse return error.MissingArgument;
+                    const str = inlineValue orelse args.next() orelse return error.MissingArgument;
                     const v = std.fmt.parseInt(Int, str, 10) catch |err| {
                         switch (err) {
                             error.Overflow => log.fatal(.app, "range overflow", .{ .arg = kebab_cased, .value = str }),
@@ -431,7 +437,7 @@ pub fn Builder(comptime commands: anytype) type {
                     }
 
                     const v = blk: {
-                        const str = args.next() orelse return error.MissingArgument;
+                        const str = inlineValue orelse args.next() orelse return error.MissingArgument;
 
                         // DupeZ branch.
                         if (comptime pointer.sentinel()) |sentinel| {
@@ -464,7 +470,7 @@ pub fn Builder(comptime commands: anytype) type {
                         @compileError("only packed structs are allowed");
                     }
 
-                    const str = args.next() orelse return error.MissingArgument;
+                    const str = inlineValue orelse args.next() orelse return error.MissingArgument;
 
                     if (std.mem.eql(u8, str, "full")) {
                         // "full" sets all the fields of packed struct.
@@ -500,7 +506,7 @@ pub fn Builder(comptime commands: anytype) type {
                         inline else => T,
                     };
 
-                    const str = args.next() orelse return error.MissingArgument;
+                    const str = inlineValue orelse args.next() orelse return error.MissingArgument;
                     const v = std.meta.stringToEnum(E, str) orelse {
                         log.fatal(.app, "invalid option choice", .{ .arg = kebab_cased, .value = str });
                         return error.InvalidArgument;
@@ -515,6 +521,10 @@ pub fn Builder(comptime commands: anytype) type {
                 .bool => {
                     if (is_multiple) {
                         @compileError("multiple option is not supported for booleans");
+                    }
+                    if (inlineValue != null) {
+                        log.fatal(.app, "bool inline unsupported", .{ .arg = kebab_cased });
+                        return error.InvalidArgument;
                     }
 
                     const default = blk: {
@@ -547,7 +557,16 @@ pub fn Builder(comptime commands: anytype) type {
 
                 break :blk command.options;
             };
-            iter_args: while (args.next()) |option_name| {
+            iter_args: while (args.next()) |option_arg| {
+                const option_name, const inlineValue = blk: {
+                    if (std.mem.startsWith(u8, option_arg, "--")) {
+                        if (std.mem.indexOfScalar(u8, option_arg, '=')) |eq_pos| {
+                            break :blk .{ option_arg[0..eq_pos], option_arg[eq_pos + 1 ..] };
+                        }
+                    }
+                    break :blk .{ option_arg, null };
+                };
+
                 inline for (options) |option| {
                     // We allow both `--my-option` and `--my_option` variants;
                     // assuming given `option` struct prefer snake_case for `name`.
@@ -555,7 +574,7 @@ pub fn Builder(comptime commands: anytype) type {
                     if (std.mem.eql(u8, option_name, "--" ++ option.name) or
                         std.mem.eql(u8, option_name, "--" ++ comptime toKebabCase(option.name)))
                     {
-                        try parseValue(allocator, args, &@field(c, option.name), option);
+                        try parseValue(allocator, args, &@field(c, option.name), option, inlineValue);
                         continue :iter_args;
                     }
 
@@ -580,7 +599,7 @@ pub fn Builder(comptime commands: anytype) type {
                                     break :blk .{ .name = variant.name, .type = option.type, .multiple = is_multiple };
                                 };
 
-                                try parseValue(allocator, args, &@field(c, option.name), opts);
+                                try parseValue(allocator, args, &@field(c, option.name), opts, inlineValue);
                                 continue :iter_args;
                             }
                         }

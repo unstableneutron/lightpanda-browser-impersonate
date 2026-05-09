@@ -30,6 +30,14 @@
             .url = "https://github.com/curl/curl/releases/download/curl-8_18_0/curl-8.18.0.tar.gz",
             .hash = "N-V-__8AALp9QAGn6CCHZ6fK_FfMyGtG824LSHYHHasM3w-y",
         },
+        .curl_impersonate = .{
+            .url = "https://github.com/unstableneutron/curl-impersonate/archive/bf7d25e39a55f7122a349e207d2b3da1d903629c.tar.gz",
+            .hash = "N-V-__8AALeIEwDadVPCqKbEq8qGpSj00kKVgz2SssAUWmPA",
+        },
+        .curl_impersonate_curl = .{
+            .url = "https://github.com/curl/curl/archive/refs/tags/curl-8_15_0.tar.gz",
+            .hash = "N-V-__8AAJorEAGeeOmpzgztayF83AhboVWghjjIFlRn5AI-",
+        },
         .sqlite3 = .{
             .url = "https://github.com/allyourcodebase/sqlite3/archive/8f840560eae88ab66668c6827c64ffbd0d74ef37.tar.gz",
             .hash = "sqlite3-3.51.0-DMxLWssOAABZ8cAvU_LfBIbp0kZjm824PU8sSLXpEDdr",

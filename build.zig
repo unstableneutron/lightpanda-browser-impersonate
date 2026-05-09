@@ -42,6 +42,7 @@ pub fn build(b: *Build) !void {
     const prebuilt_v8_path = b.option([]const u8, "prebuilt_v8_path", "Path to prebuilt libc_v8.a");
     const snapshot_path = b.option([]const u8, "snapshot_path", "Path to v8 snapshot");
     const wpt_extensions = b.option(bool, "wpt_extensions", "Extend WebAPI with WPT driver behavior") orelse false;
+    const use_curl_impersonate = b.option(bool, "use_curl_impersonate", "Use curl-impersonate forked source") orelse false;
 
     const version = resolveVersion(b);
     var stdout = std.fs.File.stdout().writer(&.{});
@@ -55,6 +56,7 @@ pub fn build(b: *Build) !void {
     opts.addOption([]const u8, "version_encoded", version_encoded);
     opts.addOption(?[]const u8, "snapshot_path", snapshot_path);
     opts.addOption(bool, "wpt_extensions", wpt_extensions);
+    opts.addOption(bool, "use_curl_impersonate", use_curl_impersonate);
 
     const enable_tsan = b.option(bool, "tsan", "Enable Thread Sanitizer") orelse false;
     const enable_asan = b.option(bool, "asan", "Enable Address Sanitizer") orelse false;
@@ -85,7 +87,11 @@ pub fn build(b: *Build) !void {
         b.default_step.dependOn(fmt_step);
 
         try linkV8(b, mod, enable_asan, enable_tsan, prebuilt_v8_path);
-        try linkCurl(b, mod, enable_tsan);
+        if (use_curl_impersonate) {
+            try linkCurlImpersonate(b, mod, enable_tsan);
+        } else {
+            try linkCurl(b, mod, enable_tsan);
+        }
         try linkHtml5Ever(b, mod);
 
         break :blk mod;
@@ -357,6 +363,44 @@ fn linkCurl(b: *Build, mod: *Build.Module, is_tsan: bool) !void {
             mod.linkFramework("SystemConfiguration", .{});
         },
         else => {},
+    }
+}
+
+fn linkCurlImpersonate(b: *Build, mod: *Build.Module, is_tsan: bool) !void {
+    // Keep curl-impersonate as an isolated source-built artifact instead of
+    // mirroring its curl source list, patches, and TLS dependency wiring here.
+    if (is_tsan) @panic("-Duse_curl_impersonate does not currently support -Dtsan");
+
+    const target = mod.resolved_target.?;
+    if (target.result.cpu.arch != b.graph.host.result.cpu.arch or
+        target.result.os.tag != b.graph.host.result.os.tag or
+        target.result.abi != b.graph.host.result.abi)
+    {
+        @panic("-Duse_curl_impersonate currently builds the native curl-impersonate target only");
+    }
+
+    const install = buildCurlImpersonateArtifact(b);
+    mod.addCMacro("CURL_STATICLIB", "1");
+    mod.addIncludePath(install.path(b, "include"));
+    mod.addObjectFile(install.path(b, "lib/libcurl-impersonate.a"));
+
+    const libidn2 = buildLibidn2(b, target, mod.optimize.?, is_tsan);
+    mod.linkLibrary(libidn2);
+
+    mod.linkSystemLibrary("c++", .{});
+    mod.linkSystemLibrary("pthread", .{});
+
+    switch (target.result.os.tag) {
+        .macos => {
+            // needed for proxying on mac
+            mod.addSystemFrameworkPath(.{ .cwd_relative = "/System/Library/Frameworks" });
+            mod.linkFramework("CoreFoundation", .{});
+            mod.linkFramework("SystemConfiguration", .{});
+            mod.linkSystemLibrary("iconv", .{});
+            mod.linkSystemLibrary("icucore", .{});
+        },
+        .linux => {},
+        else => @panic("-Duse_curl_impersonate currently supports native macOS and Linux builds only"),
     }
 }
 
@@ -663,6 +707,104 @@ fn isAtConfigName(s: []const u8) bool {
         if (!ok) return false;
     }
     return true;
+}
+
+fn buildCurlImpersonateArtifact(b: *Build) Build.LazyPath {
+    const impersonate = b.dependency("curl_impersonate", .{});
+    const curl = b.dependency("curl_impersonate_curl", .{});
+
+    const run = b.addSystemCommand(&.{
+        "bash",
+        "-eu",
+        "-c",
+        \\
+        \\out="$1"
+        \\imp_src="$2"
+        \\curl_src="$3"
+        \\src="$out/src"
+        \\prefix="$out/install"
+        \\rm -rf "$out"
+        \\mkdir -p "$src" "$prefix"
+        \\cp -R "$imp_src"/. "$src"/
+        \\chmod -R u+w "$src"
+        \\
+        \\# Keep the curl core source pinned by Zig instead of letting the
+        \\# curl-impersonate Makefile download whatever its URL resolves to.
+        \\mkdir -p "$out/curl-archive/curl-curl-8_15_0"
+        \\cp -R "$curl_src"/. "$out/curl-archive/curl-curl-8_15_0"/
+        \\tar -czf "$src/curl-8_15_0.tar.gz" -C "$out/curl-archive" curl-curl-8_15_0
+        \\
+        \\cd "$src"
+        \\if command -v gmake >/dev/null 2>&1; then
+        \\  make_cmd=gmake
+        \\else
+        \\  make_cmd=make
+        \\fi
+        \\if [ "$(uname -s)" = Darwin ] && [ "$make_cmd" != gmake ]; then
+        \\  echo "curl-impersonate requires GNU make on macOS; install gmake" >&2
+        \\  exit 1
+        \\fi
+        \\
+        \\copy_libs() {
+        \\  label="$1"
+        \\  shift
+        \\  found=0
+        \\  for dir in "$@"; do
+        \\    if [ -d "$dir" ]; then
+        \\      while IFS= read -r lib; do
+        \\        cp "$lib" "$prefix/lib"/
+        \\        found=1
+        \\      done < <(find "$dir" -maxdepth 1 -name 'lib*.a' -type f)
+        \\    fi
+        \\  done
+        \\  if [ "$found" -ne 1 ]; then
+        \\    echo "missing static dependency archive for $label" >&2
+        \\    exit 1
+        \\  fi
+        \\}
+        \\
+        \\./configure --prefix="$prefix" --enable-static
+        \\"$make_cmd" build
+        \\"$make_cmd" install
+        \\
+        \\copy_libs zlib zlib-*/installed/lib
+        \\copy_libs zstd zstd-*/installed/lib
+        \\copy_libs nghttp2 nghttp2*/installed/lib
+        \\copy_libs nghttp3 nghttp3*/installed/lib
+        \\copy_libs ngtcp2 ngtcp2*/installed/lib
+        \\copy_libs brotli brotli*/out/installed/lib
+        \\copy_libs boringssl boringssl*/lib
+        \\
+        \\cd "$prefix/lib"
+        \\mv libcurl-impersonate.a libcurl-impersonate.orig.a
+        \\lib_list="libcurl-impersonate.orig.a libz.a libzstd.a libbrotlidec.a libbrotlicommon.a libbrotlienc.a libnghttp2.a libnghttp3.a libngtcp2.a libngtcp2_crypto_boringssl.a libssl.a libcrypto.a"
+        \\case "$(uname -s)" in
+        \\  Linux)
+        \\    cp "$src"/libidn2*/installed/lib/lib*.a .
+        \\    cp "$src"/libunistring*/installed/lib/lib*.a .
+        \\    lib_list="$lib_list libidn2.a libunistring.a"
+        \\    ${CC:-cc} -r -o libcurl-impersonate.full.o -Wl,--whole-archive $lib_list -Wl,--no-whole-archive
+        \\    ar rcs libcurl-impersonate.a libcurl-impersonate.full.o
+        \\    rm -f libcurl-impersonate.full.o
+        \\    ;;
+        \\  Darwin)
+        \\    libtool -static -o libcurl-impersonate.a $lib_list
+        \\    ;;
+        \\  *)
+        \\    echo "unsupported curl-impersonate build host: $(uname -s)" >&2
+        \\    exit 1
+        \\    ;;
+        \\esac
+        \\
+        \\rm -f libcurl-impersonate.orig.a libz.a libzstd.a libbrotlidec.a libbrotlicommon.a libbrotlienc.a libnghttp2.a libnghttp3.a libngtcp2.a libngtcp2_crypto_boringssl.a libssl.a libcrypto.a libidn2.a libunistring.a
+        \\
+        ,
+        "build-curl-impersonate",
+    });
+    const out = run.addOutputDirectoryArg("curl-impersonate");
+    run.addDirectoryArg(impersonate.path(""));
+    run.addDirectoryArg(curl.path(""));
+    return out.path(b, "install");
 }
 
 fn buildCurl(

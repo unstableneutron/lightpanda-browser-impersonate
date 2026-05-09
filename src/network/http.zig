@@ -33,6 +33,7 @@ pub const WaitFd = libcurl.CurlWaitFd;
 pub const readfunc_pause = libcurl.curl_readfunc_pause;
 pub const writefunc_error = libcurl.curl_writefunc_error;
 pub const WsFrameType = libcurl.WsFrameType;
+pub const WsFrameMeta = libcurl.WsFrameMeta;
 
 const Error = libcurl.Error;
 
@@ -58,6 +59,10 @@ pub const Header = struct {
 
 pub const Headers = struct {
     headers: ?*libcurl.CurlSList,
+
+    pub fn empty() Headers {
+        return .{ .headers = null };
+    }
 
     pub fn init(user_agent: [:0]const u8) !Headers {
         const header_list = libcurl.curl_slist_append(null, user_agent);
@@ -377,6 +382,11 @@ pub const Connection = struct {
         try libcurl.curl_easy_setopt(self._easy, .connect_only, value);
     }
 
+    pub fn setWsAutoPong(self: *const Connection, enabled: bool) !void {
+        const value: c_long = if (enabled) 0 else libcurl.curl_ws_no_auto_pong;
+        try libcurl.curl_easy_setopt(self._easy, .ws_options, value);
+    }
+
     pub fn setWriteCallback(
         self: *Connection,
         comptime data_cb: libcurl.CurlWriteFunction,
@@ -420,6 +430,13 @@ pub const Connection = struct {
     ) !void {
         libcurl.curl_easy_reset(self._easy);
         self.transport = .none;
+
+        if (config.impersonateProfile()) |profile| {
+            // Must happen immediately after reset and before Lightpanda applies
+            // per-request options. curl-impersonate stores browser headers as
+            // base headers, so later CURLOPT_HTTPHEADER additions are merged.
+            try libcurl.curl_easy_impersonate(self._easy, profile, true);
+        }
 
         // timeouts
         try libcurl.curl_easy_setopt(self._easy, .timeout_ms, config.httpTimeout());
@@ -573,7 +590,10 @@ pub const Connection = struct {
     }
 
     pub fn request(self: *const Connection, http_headers: *const Config.HttpHeaders) !u16 {
-        var header_list = try Headers.init(http_headers.user_agent_header);
+        var header_list = if (http_headers.impersonated)
+            Headers.empty()
+        else
+            try Headers.init(http_headers.user_agent_header);
         defer header_list.deinit();
         try self.secretHeaders(&header_list, http_headers);
         try self.setHeaders(&header_list);

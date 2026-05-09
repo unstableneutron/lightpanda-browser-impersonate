@@ -292,6 +292,14 @@ pub fn changeProxy(self: *Client, proxy: ?[:0]const u8) !void {
 }
 
 pub fn newHeaders(self: *const Client) !http.Headers {
+    if (self.network.config.impersonateProfile() != null) {
+        // curl-impersonate owns the browser-like default headers via
+        // CURLOPT_HTTPBASEHEADER. Return an empty CURLOPT_HTTPHEADER list so
+        // callers may add request-specific headers without overriding those
+        // defaults with Lightpanda's User-Agent/Sec-CH-UA values.
+        return .{ .headers = null };
+    }
+
     const ua_header = self.user_agent_header_override orelse self.network.config.http_headers.user_agent_header;
     return http.Headers.init(ua_header);
 }

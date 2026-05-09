@@ -1,0 +1,94 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Lightpanda Autobahn WebSocket client</title>
+<pre id="status">starting</pre>
+<script>
+(() => {
+  const params = new URLSearchParams(location.search);
+  const wsBase = params.get("ws") || "ws://127.0.0.1:9001";
+  const agent = params.get("agent") || "lightpanda";
+  const casesParam = params.get("cases");
+  const status = document.getElementById("status");
+
+  const setStatus = (line) => {
+    status.textContent = line;
+    console.log(line);
+  };
+
+  const connect = (url) => new Promise((resolve, reject) => {
+    let settled = false;
+    const ws = new WebSocket(url);
+    ws.binaryType = "arraybuffer";
+
+    ws.onopen = () => {
+      settled = true;
+      resolve(ws);
+    };
+    ws.onerror = () => {
+      if (!settled) reject(new Error("WebSocket open failed: " + url));
+    };
+  });
+
+  const getCaseCount = async () => {
+    const ws = await connect(`${wsBase}/getCaseCount`);
+    return await new Promise((resolve, reject) => {
+      ws.onmessage = (event) => resolve(Number(event.data));
+      ws.onerror = () => reject(new Error("getCaseCount failed"));
+    });
+  };
+
+  const expandCases = (count) => {
+    if (!casesParam || casesParam === "*") {
+      return Array.from({length: count}, (_, i) => i + 1);
+    }
+
+    const out = [];
+    for (const part of casesParam.split(",")) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      if (/^\d+$/.test(trimmed)) {
+        out.push(Number(trimmed));
+      } else {
+        throw new Error("Only numeric case lists are supported by client.html; expand patterns in run.py: " + trimmed);
+      }
+    }
+    return out;
+  };
+
+  const runCase = async (caseNumber) => {
+    setStatus(`running case ${caseNumber}`);
+    const ws = await connect(`${wsBase}/runCase?case=${caseNumber}&agent=${encodeURIComponent(agent)}`);
+    await new Promise((resolve) => {
+      ws.onmessage = (event) => ws.send(event.data);
+      // Several Autobahn negative cases intentionally trigger protocol errors
+      // and abnormal closes. The server report is the source of truth; keep
+      // driving the suite until close so later cases still run.
+      ws.onclose = () => resolve();
+    });
+  };
+
+  const updateReports = async () => {
+    setStatus("updating reports");
+    const ws = await connect(`${wsBase}/updateReports?agent=${encodeURIComponent(agent)}`);
+    await new Promise((resolve, reject) => {
+      ws.onerror = () => reject(new Error("updateReports failed"));
+      ws.onclose = () => resolve();
+    });
+  };
+
+  (async () => {
+    const count = await getCaseCount();
+    const cases = expandCases(count);
+    setStatus(`case count ${count}; selected ${cases.length}`);
+    for (const caseNumber of cases) {
+      await runCase(caseNumber);
+    }
+    await updateReports();
+    document.body.dataset.autobahnDone = "true";
+    setStatus("AUTOBAHN_DONE");
+  })().catch((err) => {
+    document.body.dataset.autobahnError = String(err && err.stack || err);
+    setStatus("AUTOBAHN_ERROR " + document.body.dataset.autobahnError);
+  });
+})();
+</script>
