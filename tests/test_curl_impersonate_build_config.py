@@ -8,7 +8,7 @@ def read(path: str) -> str:
     return (ROOT / path).read_text()
 
 
-def test_build_zon_pins_curl_impersonate_sources() -> None:
+def test_build_zon_pins_curl_impersonate_sources_for_source_build_fallback() -> None:
     zon = read("build.zig.zon")
 
     assert ".curl_impersonate" in zon
@@ -19,11 +19,13 @@ def test_build_zon_pins_curl_impersonate_sources() -> None:
     assert "curl-8_15_0.tar.gz" in zon
 
 
-def test_build_zig_exposes_curl_impersonate_build_option() -> None:
+def test_build_zig_exposes_curl_impersonate_build_options() -> None:
     build = read("build.zig")
 
     assert "use_curl_impersonate" in build
-    assert "Use curl-impersonate forked source" in build
+    assert "Use curl-impersonate fork release artifacts" in build
+    assert "curl_impersonate_source_build" in build
+    assert "Build curl-impersonate from source instead of using release artifacts" in build
     assert "if (use_curl_impersonate)" in build
 
 
@@ -39,6 +41,9 @@ def test_release_workflow_uses_available_static_release_runners() -> None:
     assert "macos-15-intel" in release
     assert "macos-13" not in release
     assert "macos-14-large" not in release
+    assert "curl-impersonate-source-build" in install
+    assert "inputs.curl-impersonate-source-build == 'true'" in install
+    assert "sudo apt-get install -y wget curl" in install
     assert "HOMEBREW_NO_AUTO_UPDATE=1" in install
     assert "brew update" not in install
     assert "cache-key:" in install
@@ -48,9 +53,11 @@ def test_release_workflow_uses_available_static_release_runners() -> None:
     assert "inputs.curl-impersonate" in install
 
 
-def test_curl_impersonate_archive_does_not_bundle_duplicate_idn_libraries() -> None:
+def test_source_built_curl_impersonate_archive_does_not_bundle_duplicate_idn_libraries() -> None:
     build = read("build.zig")
 
+    assert "if (source_build or target.result.os.tag == .macos)" in build
+    assert "addLibidn2Headers(b, mod)" in build
     assert "const libidn2 = buildLibidn2" in build
     assert "mod.linkLibrary(libidn2)" in build
     assert "libidn2*/installed/lib/lib*.a" not in build
@@ -58,17 +65,43 @@ def test_curl_impersonate_archive_does_not_bundle_duplicate_idn_libraries() -> N
     assert "libidn2.a libunistring.a" not in build
 
 
-def test_build_zig_uses_curl_impersonate_as_an_isolated_build_artifact() -> None:
+def test_build_zig_uses_curl_impersonate_release_archives_by_default() -> None:
     build = read("build.zig")
 
+    tag = "v1.5.6-lightpanda.wsstartframe.1"
     assert "fn linkCurlImpersonate(" in build
+    assert "fn curlImpersonatePrebuiltArtifact(" in build
+    assert tag in build
+    assert f"libcurl-impersonate-{{s}}.{{s}}.tar.gz" in build
+    for host in (
+        "x86_64-linux-gnu",
+        "aarch64-linux-gnu",
+        "x86_64-macos",
+        "arm64-macos",
+    ):
+        assert host in build
+    for sha256 in (
+        "5a6863e5552494446d81742bc8c2a611b1c071d0777ffe3f1f85d21ac80b84b2",
+        "f060c1209613e3023ddfbc64d06c246cb55f4126af44f794fad691fe0da358bb",
+        "516136a7af2e62981cfeffcc91a92cbcae33b8babf7161160edccc2400d4334b",
+        "9684ddbbc2f996eaaacb2f7a4fa8207d7db794e0687c175b99d2fb0f4002ac04",
+    ):
+        assert sha256 in build
+    assert "curl -fL --retry 3" in build
+    assert "sha256sum -c -" in build
+    assert "shasum -a 256 -c -" in build
+    assert "libcurl-impersonate.a" in build
+    assert "mod.addObjectFile" in build
+
+
+def test_build_zig_keeps_curl_impersonate_source_build_as_fallback() -> None:
+    build = read("build.zig")
+
     assert "fn buildCurlImpersonateArtifact(" in build
     assert "curl_impersonate_curl" in build
     assert "curl_impersonate" in build
     assert "curl-8_15_0.tar.gz" in build
     assert "gmake" in build
-    assert "libcurl-impersonate.a" in build
-    assert "mod.addObjectFile" in build
     assert "fn buildCurlFromSource(" not in build
     assert "patches/curl.patch" not in build
     assert "patches/curl-websocket-readfunction-backport.patch" not in build

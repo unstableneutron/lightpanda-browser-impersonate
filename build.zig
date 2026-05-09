@@ -42,7 +42,8 @@ pub fn build(b: *Build) !void {
     const prebuilt_v8_path = b.option([]const u8, "prebuilt_v8_path", "Path to prebuilt libc_v8.a");
     const snapshot_path = b.option([]const u8, "snapshot_path", "Path to v8 snapshot");
     const wpt_extensions = b.option(bool, "wpt_extensions", "Extend WebAPI with WPT driver behavior") orelse false;
-    const use_curl_impersonate = b.option(bool, "use_curl_impersonate", "Use curl-impersonate forked source") orelse false;
+    const use_curl_impersonate = b.option(bool, "use_curl_impersonate", "Use curl-impersonate fork release artifacts") orelse false;
+    const curl_impersonate_source_build = b.option(bool, "curl_impersonate_source_build", "Build curl-impersonate from source instead of using release artifacts") orelse false;
 
     const version = resolveVersion(b);
     var stdout = std.fs.File.stdout().writer(&.{});
@@ -88,7 +89,7 @@ pub fn build(b: *Build) !void {
 
         try linkV8(b, mod, enable_asan, enable_tsan, prebuilt_v8_path);
         if (use_curl_impersonate) {
-            try linkCurlImpersonate(b, mod, enable_tsan);
+            try linkCurlImpersonate(b, mod, enable_tsan, curl_impersonate_source_build);
         } else {
             try linkCurl(b, mod, enable_tsan);
         }
@@ -366,26 +367,33 @@ fn linkCurl(b: *Build, mod: *Build.Module, is_tsan: bool) !void {
     }
 }
 
-fn linkCurlImpersonate(b: *Build, mod: *Build.Module, is_tsan: bool) !void {
-    // Keep curl-impersonate as an isolated source-built artifact instead of
-    // mirroring its curl source list, patches, and TLS dependency wiring here.
+fn linkCurlImpersonate(b: *Build, mod: *Build.Module, is_tsan: bool, source_build: bool) !void {
+    // Prefer the fork's prebuilt release archives for release speed. Keep the
+    // source-built path as an explicit fallback for local debugging or when
+    // refreshing curl-impersonate itself.
     if (is_tsan) @panic("-Duse_curl_impersonate does not currently support -Dtsan");
 
     const target = mod.resolved_target.?;
-    if (target.result.cpu.arch != b.graph.host.result.cpu.arch or
-        target.result.os.tag != b.graph.host.result.os.tag or
-        target.result.abi != b.graph.host.result.abi)
-    {
-        @panic("-Duse_curl_impersonate currently builds the native curl-impersonate target only");
-    }
+    const install = if (source_build) blk: {
+        if (target.result.cpu.arch != b.graph.host.result.cpu.arch or
+            target.result.os.tag != b.graph.host.result.os.tag or
+            target.result.abi != b.graph.host.result.abi)
+        {
+            @panic("-Dcurl_impersonate_source_build currently builds the native curl-impersonate target only");
+        }
+        break :blk buildCurlImpersonateArtifact(b);
+    } else curlImpersonatePrebuiltArtifact(b, target);
 
-    const install = buildCurlImpersonateArtifact(b);
     mod.addCMacro("CURL_STATICLIB", "1");
     mod.addIncludePath(install.path(b, "include"));
     mod.addObjectFile(install.path(b, "lib/libcurl-impersonate.a"));
 
-    const libidn2 = buildLibidn2(b, target, mod.optimize.?, is_tsan);
-    mod.linkLibrary(libidn2);
+    if (source_build or target.result.os.tag == .macos) {
+        const libidn2 = buildLibidn2(b, target, mod.optimize.?, is_tsan);
+        mod.linkLibrary(libidn2);
+    } else {
+        addLibidn2Headers(b, mod);
+    }
 
     mod.linkSystemLibrary("c++", .{});
     mod.linkSystemLibrary("pthread", .{});
@@ -402,6 +410,63 @@ fn linkCurlImpersonate(b: *Build, mod: *Build.Module, is_tsan: bool) !void {
         .linux => {},
         else => @panic("-Duse_curl_impersonate currently supports native macOS and Linux builds only"),
     }
+}
+
+fn curlImpersonatePrebuiltArtifact(b: *Build, target: Build.ResolvedTarget) Build.LazyPath {
+    const os = target.result.os.tag;
+    const arch = target.result.cpu.arch;
+    const abi = target.result.abi;
+    const tag = "v1.5.6-lightpanda.wsstartframe.1";
+
+    const host, const sha256 = switch (os) {
+        .linux => blk: {
+            if (!abi.isGnu()) @panic("prebuilt curl-impersonate artifacts currently support Linux GNU targets only");
+            break :blk switch (arch) {
+                .x86_64 => .{ "x86_64-linux-gnu", "5a6863e5552494446d81742bc8c2a611b1c071d0777ffe3f1f85d21ac80b84b2" },
+                .aarch64 => .{ "aarch64-linux-gnu", "f060c1209613e3023ddfbc64d06c246cb55f4126af44f794fad691fe0da358bb" },
+                else => @panic("prebuilt curl-impersonate artifacts currently support Linux x86_64 and aarch64 only"),
+            };
+        },
+        .macos => switch (arch) {
+            .x86_64 => .{ "x86_64-macos", "516136a7af2e62981cfeffcc91a92cbcae33b8babf7161160edccc2400d4334b" },
+            .aarch64 => .{ "arm64-macos", "9684ddbbc2f996eaaacb2f7a4fa8207d7db794e0687c175b99d2fb0f4002ac04" },
+            else => @panic("prebuilt curl-impersonate artifacts currently support macOS x86_64 and arm64 only"),
+        },
+        else => @panic("prebuilt curl-impersonate artifacts currently support Linux and macOS only"),
+    };
+
+    const archive = b.fmt("libcurl-impersonate-{s}.{s}.tar.gz", .{ tag, host });
+    const url = b.fmt("https://github.com/unstableneutron/curl-impersonate/releases/download/{s}/{s}", .{ tag, archive });
+
+    const run = b.addSystemCommand(&.{
+        "bash",
+        "-eu",
+        "-c",
+        \\
+        \\out="$1"
+        \\url="$2"
+        \\sha256="$3"
+        \\archive="$out/archive.tar.gz"
+        \\rm -rf "$out"
+        \\mkdir -p "$out"
+        \\curl -fL --retry 3 --retry-delay 2 -o "$archive" "$url"
+        \\if command -v sha256sum >/dev/null 2>&1; then
+        \\  echo "$sha256  $archive" | sha256sum -c -
+        \\else
+        \\  echo "$sha256  $archive" | shasum -a 256 -c -
+        \\fi
+        \\tar -xzf "$archive" -C "$out"
+        \\test -f "$out/include/curl/curl.h"
+        \\test -f "$out/include/curl/websockets.h"
+        \\test -f "$out/lib/libcurl-impersonate.a"
+        \\
+        ,
+        "fetch-curl-impersonate",
+    });
+    const out = run.addOutputDirectoryArg("curl-impersonate-prebuilt");
+    run.addArg(url);
+    run.addArg(sha256);
+    return out;
 }
 
 fn buildZlib(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, is_tsan: bool) *Build.Step.Compile {
@@ -545,6 +610,11 @@ fn buildNghttp2(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.O
     });
 
     return lib;
+}
+
+fn addLibidn2Headers(b: *Build, mod: *Build.Module) void {
+    const dep = b.dependency("libidn2", .{});
+    mod.addIncludePath(dep.path("lib"));
 }
 
 fn buildLibidn2(

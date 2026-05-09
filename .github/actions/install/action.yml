@@ -27,7 +27,11 @@ inputs:
     required: false
     default: 'false'
   curl-impersonate:
-    description: 'install native build tools required by curl-impersonate'
+    description: 'enable curl-impersonate-aware cache keys and download tools'
+    required: false
+    default: 'false'
+  curl-impersonate-source-build:
+    description: 'install native build tools required to build curl-impersonate from source'
     required: false
     default: 'false'
 
@@ -40,10 +44,10 @@ runs:
       shell: bash
       run: |
         sudo apt-get update
-        sudo apt-get install -y wget xz-utils ca-certificates clang make git
+        sudo apt-get install -y wget curl xz-utils ca-certificates clang make git
 
     - name: Install curl-impersonate apt deps
-      if: ${{ inputs.os == 'linux' && inputs.curl-impersonate == 'true' }}
+      if: ${{ inputs.os == 'linux' && inputs.curl-impersonate-source-build == 'true' }}
       shell: bash
       run: |
         sudo apt-get install -y \
@@ -51,7 +55,7 @@ runs:
           ninja-build pkg-config unzip
 
     - name: Install curl-impersonate Homebrew deps
-      if: ${{ inputs.os == 'macos' && inputs.curl-impersonate == 'true' }}
+      if: ${{ inputs.os == 'macos' && inputs.curl-impersonate-source-build == 'true' }}
       shell: bash
       run: |
         HOMEBREW_NO_AUTO_UPDATE=1 brew install autoconf automake cmake go libtool make ninja pkg-config
