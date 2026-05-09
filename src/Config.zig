@@ -28,6 +28,7 @@ const mcp = @import("mcp.zig");
 const Storage = @import("storage/Storage.zig");
 const WebBotAuthConfig = @import("network/WebBotAuth.zig").Config;
 const curl_impersonate_profiles = @import("curl_impersonate_profiles");
+const BrowserProfile = @import("impersonation/BrowserProfile.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -46,26 +47,7 @@ pub const CDP_KEEPALIVE_CNT: c_int = 3;
 
 const Config = @This();
 
-pub const BrowserIdentity = struct {
-    pub const Brand = struct {
-        brand: []const u8,
-        version: []const u8,
-    };
-
-    user_agent: [:0]const u8,
-    ua_platform: []const u8,
-    navigator_platform: []const u8,
-    mobile: bool,
-    ua_full_version: []const u8,
-    brands: []Brand,
-
-    pub fn deinit(self: BrowserIdentity, allocator: Allocator) void {
-        allocator.free(self.user_agent);
-        allocator.free(self.ua_full_version);
-        for (self.brands) |brand| allocator.free(brand.version);
-        allocator.free(self.brands);
-    }
-};
+pub const BrowserIdentity = BrowserProfile.BrowserIdentity;
 
 fn logFilterScopesValidator(allocator: Allocator, args: *std.process.ArgIterator, list: *std.ArrayList(log.Scope)) !void {
     const str = args.next() orelse return error.InvalidOption;
@@ -402,56 +384,7 @@ fn canonicalizeImpersonateAlias(allocator: Allocator, profile: []const u8) ![]co
 }
 
 fn browserIdentityForImpersonateProfile(allocator: Allocator, profile_name: []const u8) !?BrowserIdentity {
-    const profile = lookupImpersonateProfile(profile_name) orelse return null;
-    if (std.mem.eql(u8, profile.family, "chrome")) {
-        return try chromiumBrowserIdentity(allocator, profile);
-    }
-    return null;
-}
-
-fn lookupImpersonateProfile(profile_name: []const u8) ?curl_impersonate_profiles.Profile {
-    for (curl_impersonate_profiles.profiles) |profile| {
-        if (std.mem.eql(u8, profile.name, profile_name)) return profile;
-    }
-    return null;
-}
-
-fn chromiumBrowserIdentity(
-    allocator: Allocator,
-    profile: curl_impersonate_profiles.Profile,
-) !BrowserIdentity {
-    const full_version = try std.fmt.allocPrint(allocator, "{d}.0.0.0", .{profile.version});
-    errdefer allocator.free(full_version);
-
-    const user_agent = if (profile.platform) |platform|
-        if (std.mem.eql(u8, platform, "android"))
-            try std.fmt.allocPrintSentinel(allocator, "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{s} Mobile Safari/537.36", .{full_version}, 0)
-        else
-            try std.fmt.allocPrintSentinel(allocator, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{s} Safari/537.36", .{full_version}, 0)
-    else
-        try std.fmt.allocPrintSentinel(allocator, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{s} Safari/537.36", .{full_version}, 0);
-    errdefer allocator.free(user_agent);
-
-    const major = try std.fmt.allocPrint(allocator, "{d}", .{profile.version});
-    errdefer allocator.free(major);
-
-    var brands = try allocator.alloc(BrowserIdentity.Brand, 3);
-    errdefer allocator.free(brands);
-    brands[0] = .{ .brand = "Chromium", .version = try allocator.dupe(u8, major) };
-    errdefer allocator.free(brands[0].version);
-    brands[1] = .{ .brand = "Not-A.Brand", .version = try allocator.dupe(u8, "24") };
-    errdefer allocator.free(brands[1].version);
-    brands[2] = .{ .brand = "Google Chrome", .version = major };
-
-    const is_android = if (profile.platform) |platform| std.mem.eql(u8, platform, "android") else false;
-    return .{
-        .user_agent = user_agent,
-        .ua_platform = if (is_android) "Android" else "macOS",
-        .navigator_platform = if (is_android) "Linux armv8l" else "MacIntel",
-        .mobile = is_android,
-        .ua_full_version = full_version,
-        .brands = brands,
-    };
+    return BrowserProfile.identityForImpersonateProfile(allocator, profile_name);
 }
 
 fn expectNormalizedImpersonateProfile(input: []const u8, expected: []const u8) !void {

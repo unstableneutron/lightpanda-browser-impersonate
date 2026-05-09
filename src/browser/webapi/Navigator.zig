@@ -23,7 +23,9 @@ const builtin = @import("builtin");
 const js = @import("../js/js.zig");
 const Frame = @import("../Frame.zig");
 
-const PluginArray = @import("PluginArray.zig");
+const PluginTypes = @import("PluginArray.zig");
+const PluginArray = PluginTypes;
+const MimeTypeArray = PluginTypes.MimeTypeArray;
 const Permissions = @import("Permissions.zig");
 const StorageManager = @import("StorageManager.zig");
 const NavigatorUAData = @import("NavigatorUAData.zig");
@@ -33,6 +35,7 @@ const log = lp.log;
 const Navigator = @This();
 _pad: bool = false,
 _plugins: PluginArray = .{},
+_mime_types: MimeTypeArray = .{},
 _permissions: Permissions = .{},
 _storage: StorageManager = .{},
 _ua_data: NavigatorUAData = .{},
@@ -44,6 +47,27 @@ pub fn getUserAgent(_: *const Navigator, frame: *Frame) []const u8 {
         return identity.user_agent;
     }
     return frame._session.browser.http_client.getUserAgent();
+}
+
+pub fn getAppCodeName(_: *const Navigator, frame: *Frame) []const u8 {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        return identity.app_code_name;
+    }
+    return "Netscape";
+}
+
+pub fn getAppName(_: *const Navigator, frame: *Frame) []const u8 {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        return identity.app_name;
+    }
+    return "Netscape";
+}
+
+pub fn getAppVersion(_: *const Navigator, frame: *Frame) []const u8 {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        return identity.app_version;
+    }
+    return "1.0";
 }
 
 pub fn getLanguages(_: *const Navigator) [2][]const u8 {
@@ -63,6 +87,69 @@ pub fn getPlatform(_: *const Navigator, frame: *Frame) []const u8 {
     };
 }
 
+pub fn getVendor(_: *const Navigator, frame: *Frame) []const u8 {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        return identity.vendor;
+    }
+    return "";
+}
+
+pub fn getProduct(_: *const Navigator, frame: *Frame) []const u8 {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        return identity.product;
+    }
+    return "Gecko";
+}
+
+pub fn getProductSub(_: *const Navigator, frame: *Frame) []const u8 {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        return identity.product_sub;
+    }
+    return "20030107";
+}
+
+pub fn getVendorSub(_: *const Navigator, frame: *Frame) []const u8 {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        return identity.vendor_sub;
+    }
+    return "";
+}
+
+pub fn getDoNotTrack(_: *const Navigator, frame: *Frame) ?[]const u8 {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        return identity.do_not_track;
+    }
+    return null;
+}
+
+pub fn getGlobalPrivacyControl(_: *const Navigator, frame: *Frame) ?bool {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        return identity.global_privacy_control;
+    }
+    return true;
+}
+
+pub fn getHardwareConcurrency(_: *const Navigator, frame: *Frame) u8 {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        return identity.hardware_concurrency;
+    }
+    return 4;
+}
+
+pub fn getDeviceMemory(_: *const Navigator, frame: *Frame) ?f64 {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        return identity.device_memory;
+    }
+    return 8.0;
+}
+
+pub fn getPdfViewerEnabled(_: *const Navigator, frame: *Frame) bool {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        return identity.pdf_viewer_enabled;
+    }
+    return true;
+}
+
 /// Returns whether Java is enabled (always false)
 pub fn javaEnabled(_: *const Navigator) bool {
     return false;
@@ -70,6 +157,10 @@ pub fn javaEnabled(_: *const Navigator) bool {
 
 pub fn getPlugins(self: *Navigator) *PluginArray {
     return &self._plugins;
+}
+
+pub fn getMimeTypes(self: *Navigator) *MimeTypeArray {
+    return &self._mime_types;
 }
 
 pub fn getPermissions(self: *Navigator) *Permissions {
@@ -80,7 +171,10 @@ pub fn getStorage(self: *Navigator) *StorageManager {
     return &self._storage;
 }
 
-pub fn getUserAgentData(self: *Navigator) *NavigatorUAData {
+pub fn getUserAgentData(self: *Navigator, frame: *Frame) ?*NavigatorUAData {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        if (!identity.supports_ua_data) return null;
+    }
     return &self._ua_data;
 }
 
@@ -169,23 +263,27 @@ pub const JsApi = struct {
 
     // Read-only properties
     pub const userAgent = bridge.accessor(Navigator.getUserAgent, null, .{});
-    pub const appName = bridge.property("Netscape", .{ .template = false });
-    pub const appCodeName = bridge.property("Netscape", .{ .template = false });
-    pub const appVersion = bridge.property("1.0", .{ .template = false });
+    pub const appName = bridge.accessor(Navigator.getAppName, null, .{});
+    pub const appCodeName = bridge.accessor(Navigator.getAppCodeName, null, .{});
+    pub const appVersion = bridge.accessor(Navigator.getAppVersion, null, .{});
     pub const platform = bridge.accessor(Navigator.getPlatform, null, .{});
     pub const language = bridge.property("en-US", .{ .template = false });
     pub const languages = bridge.accessor(Navigator.getLanguages, null, .{});
     pub const onLine = bridge.property(true, .{ .template = false });
     pub const cookieEnabled = bridge.property(true, .{ .template = false });
-    pub const hardwareConcurrency = bridge.property(4, .{ .template = false });
-    pub const deviceMemory = bridge.property(@as(f64, 8.0), .{ .template = false });
+    pub const hardwareConcurrency = bridge.accessor(Navigator.getHardwareConcurrency, null, .{});
+    pub const deviceMemory = bridge.accessor(Navigator.getDeviceMemory, null, .{ .null_as_undefined = true });
     pub const maxTouchPoints = bridge.property(0, .{ .template = false });
-    pub const vendor = bridge.property("", .{ .template = false });
-    pub const product = bridge.property("Gecko", .{ .template = false });
+    pub const vendor = bridge.accessor(Navigator.getVendor, null, .{});
+    pub const product = bridge.accessor(Navigator.getProduct, null, .{});
+    pub const productSub = bridge.accessor(Navigator.getProductSub, null, .{});
+    pub const vendorSub = bridge.accessor(Navigator.getVendorSub, null, .{});
+    pub const pdfViewerEnabled = bridge.accessor(Navigator.getPdfViewerEnabled, null, .{});
     pub const webdriver = bridge.property(false, .{ .template = false });
     pub const plugins = bridge.accessor(Navigator.getPlugins, null, .{});
-    pub const doNotTrack = bridge.property(null, .{ .template = false });
-    pub const globalPrivacyControl = bridge.property(true, .{ .template = false });
+    pub const mimeTypes = bridge.accessor(Navigator.getMimeTypes, null, .{});
+    pub const doNotTrack = bridge.accessor(Navigator.getDoNotTrack, null, .{ .null_as_undefined = true });
+    pub const globalPrivacyControl = bridge.accessor(Navigator.getGlobalPrivacyControl, null, .{ .null_as_undefined = true });
     pub const registerProtocolHandler = bridge.function(Navigator.registerProtocolHandler, .{ .dom_exception = true });
     pub const unregisterProtocolHandler = bridge.function(Navigator.unregisterProtocolHandler, .{ .dom_exception = true });
 
@@ -194,7 +292,7 @@ pub const JsApi = struct {
     pub const getBattery = bridge.function(Navigator.getBattery, .{});
     pub const permissions = bridge.accessor(Navigator.getPermissions, null, .{});
     pub const storage = bridge.accessor(Navigator.getStorage, null, .{});
-    pub const userAgentData = bridge.accessor(Navigator.getUserAgentData, null, .{});
+    pub const userAgentData = bridge.accessor(Navigator.getUserAgentData, null, .{ .null_as_undefined = true });
 };
 
 const testing = @import("../../testing.zig");

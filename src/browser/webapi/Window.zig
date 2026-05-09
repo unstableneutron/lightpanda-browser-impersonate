@@ -171,7 +171,10 @@ pub fn getNavigator(self: *Window) *Navigator {
     return &self._navigator;
 }
 
-pub fn getChrome(self: *Window) *Chrome {
+pub fn getChrome(self: *Window, frame: *Frame) ?*Chrome {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        if (!identity.window_chrome) return null;
+    }
     return &self._chrome;
 }
 
@@ -863,7 +866,7 @@ pub const JsApi = struct {
     pub const window = bridge.accessor(Window.getWindow, null, .{});
     pub const parent = bridge.accessor(Window.getParent, null, .{});
     pub const navigator = bridge.accessor(Window.getNavigator, null, .{});
-    pub const chrome = bridge.accessor(Window.getChrome, null, .{});
+    pub const chrome = bridge.accessor(Window.getChrome, null, .{ .null_as_undefined = true });
     pub const screen = bridge.accessor(Window.getScreen, null, .{});
     pub const visualViewport = bridge.accessor(Window.getVisualViewport, null, .{});
     pub const performance = bridge.accessor(Window.getPerformance, null, .{});

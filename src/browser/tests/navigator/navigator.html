@@ -9,6 +9,7 @@
   testing.expectEqual('Netscape', navigator.appName);
   testing.expectEqual('1.0', navigator.appVersion);
   testing.expectEqual(true, navigator.platform.length > 0);
+  testing.expectEqual(true, navigator.pdfViewerEnabled);
 
   // Platform should be one of the known values
   const validPlatforms = ['MacIntel', 'Win32', 'Linux x86_64', 'FreeBSD', 'Unknown'];
@@ -28,9 +29,21 @@
   testing.expectEqual(false, navigator.javaEnabled());
   testing.expectEqual(false, navigator.webdriver);
   testing.expectEqual(5, navigator.plugins.length);
-  testing.expectEqual(true, navigator.plugins[0] instanceof Plugin);
-  testing.expectEqual(navigator.plugins[0], navigator.plugins.item(0));
+  testing.expectEqual('function', typeof Plugin);
+  testing.expectEqual('PDF Viewer', navigator.plugins.item(0).name);
   testing.expectEqual(null, navigator.plugins.item(99));
+  testing.expectEqual(2, navigator.plugins[0].length);
+  testing.expectEqual('application/pdf', navigator.plugins[0][0].type);
+  testing.expectEqual('text/pdf', navigator.plugins[0][1].type);
+  testing.expectEqual('application/pdf', navigator.plugins[0]['application/pdf'].type);
+  testing.expectEqual('text/pdf', navigator.plugins[0]['text/pdf'].type);
+
+  testing.expectEqual(2, navigator.mimeTypes.length);
+  testing.expectEqual('function', typeof MimeType);
+  testing.expectEqual('application/pdf', navigator.mimeTypes[0].type);
+  testing.expectEqual('text/pdf', navigator.mimeTypes[1].type);
+  testing.expectEqual(null, navigator.mimeTypes.item(99));
+  testing.expectEqual('PDF Viewer', navigator.mimeTypes[0].enabledPlugin.name);
 </script>
 
 <script id=permission_query type=module>
@@ -60,7 +73,7 @@
 
     await state.done(() =>{
       testing.expectEqual(0, estimate.usage);
-      testing.expectEqual(1024 * 1024 * 1024, estimate.quota);
+      testing.expectEqual(10 * 1024 * 1024 * 1024, estimate.quota);
     });
   }
 </script>

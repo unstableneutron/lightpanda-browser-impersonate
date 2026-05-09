@@ -30,20 +30,20 @@ _pad: bool = false,
 pub fn estimate(_: *const StorageManager, frame: *Frame) !js.Promise {
     const est = try frame._factory.create(StorageEstimate{
         ._usage = 0,
-        ._quota = 1024 * 1024 * 1024, // 1 GiB
+        ._quota = 10 * 1024 * 1024 * 1024, // 10 GiB, matching common Chrome/Firefox desktop estimates.
     });
     return frame.js.local.?.resolvePromise(est);
 }
 
 const StorageEstimate = struct {
-    _quota: u64,
-    _usage: u64,
+    _quota: f64,
+    _usage: f64,
 
-    fn getUsage(self: *const StorageEstimate) u64 {
+    fn getUsage(self: *const StorageEstimate) f64 {
         return self._usage;
     }
 
-    fn getQuota(self: *const StorageEstimate) u64 {
+    fn getQuota(self: *const StorageEstimate) f64 {
         return self._quota;
     }
 
