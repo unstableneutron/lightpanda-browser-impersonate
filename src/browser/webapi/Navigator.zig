@@ -40,6 +40,9 @@ _ua_data: NavigatorUAData = .{},
 pub const init: Navigator = .{};
 
 pub fn getUserAgent(_: *const Navigator, frame: *Frame) []const u8 {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        return identity.user_agent;
+    }
     return frame._session.browser.http_client.getUserAgent();
 }
 
@@ -47,7 +50,10 @@ pub fn getLanguages(_: *const Navigator) [2][]const u8 {
     return .{ "en-US", "en" };
 }
 
-pub fn getPlatform(_: *const Navigator) []const u8 {
+pub fn getPlatform(_: *const Navigator, frame: *Frame) []const u8 {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        return identity.navigator_platform;
+    }
     return switch (builtin.os.tag) {
         .macos => "MacIntel",
         .windows => "Win32",

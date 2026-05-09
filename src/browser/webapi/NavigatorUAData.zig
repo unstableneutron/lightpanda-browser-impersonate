@@ -27,28 +27,41 @@ const NavigatorUAData = @This();
 
 _pad: bool = false,
 
-const Brand = struct {
-    brand: []const u8,
-    version: []const u8,
-};
+const Brand = Config.BrowserIdentity.Brand;
 
-pub fn getBrands(_: *const NavigatorUAData) []const Brand {
+pub fn getBrands(_: *const NavigatorUAData, frame: *Frame) []const Brand {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        return identity.brands;
+    }
     return brandList();
 }
 
-pub fn getMobile(_: *const NavigatorUAData) bool {
+pub fn getMobile(_: *const NavigatorUAData, frame: *Frame) bool {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        return identity.mobile;
+    }
     return false;
 }
 
-pub fn getPlatform(_: *const NavigatorUAData) []const u8 {
+pub fn getPlatform(_: *const NavigatorUAData, frame: *Frame) []const u8 {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        return identity.ua_platform;
+    }
     return uaPlatform();
 }
 
-pub fn toJSON(_: *const NavigatorUAData) struct {
+pub fn toJSON(_: *const NavigatorUAData, frame: *Frame) struct {
     brands: []const Brand,
     mobile: bool,
     platform: []const u8,
 } {
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        return .{
+            .mobile = identity.mobile,
+            .brands = identity.brands,
+            .platform = identity.ua_platform,
+        };
+    }
     return .{
         .mobile = false,
         .brands = brandList(),
@@ -62,6 +75,22 @@ pub fn getHighEntropyValues(_: *const NavigatorUAData, hints: []const []const u8
     // also valid to just return everything.
 
     _ = hints;
+
+    if (frame._session.browser.app.network.config.browserIdentity()) |identity| {
+        return frame.js.local.?.resolvePromise(.{
+            .brands = identity.brands,
+            .mobile = identity.mobile,
+            .platform = identity.ua_platform,
+            .architecture = if (identity.mobile) "arm" else uaArchitecture(),
+            .bitness = uaBitness(),
+            .model = "",
+            .platformVersion = "",
+            .uaFullVersion = identity.ua_full_version,
+            .fullVersionList = identity.brands,
+            .wow64 = false,
+            .formFactor = if (identity.mobile) [_][]const u8{"Mobile"} else [_][]const u8{"Desktop"},
+        });
+    }
 
     return frame.js.local.?.resolvePromise(.{
         .brands = brandList(),

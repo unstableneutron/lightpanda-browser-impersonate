@@ -383,7 +383,7 @@ fn generateCurlImpersonateProfilesModule(b: *Build) *Build.Module {
     addMobileAliases(b, profiles.items, &aliases, "safari", "ios");
     addMobileAliases(b, profiles.items, &aliases, "chrome", "android");
 
-    const source = renderImpersonateAliases(b, aliases.items);
+    const source = renderImpersonateProfiles(b, profiles.items, aliases.items);
     const generated = b.addWriteFiles().add("curl_impersonate_profiles.zig", source);
     return b.createModule(.{ .root_source_file = generated });
 }
@@ -526,14 +526,40 @@ fn lessImpersonateAlias(_: void, a: ImpersonateAlias, b: ImpersonateAlias) bool 
     return std.mem.lessThan(u8, a.alias, b.alias);
 }
 
-fn renderImpersonateAliases(b: *Build, aliases: []ImpersonateAlias) []const u8 {
+fn renderImpersonateProfiles(
+    b: *Build,
+    profiles: []const ImpersonateProfile,
+    aliases: []ImpersonateAlias,
+) []const u8 {
     std.mem.sort(ImpersonateAlias, aliases, {}, lessImpersonateAlias);
     var source: std.ArrayList(u8) = .empty;
     const w = source.writer(b.allocator);
     w.print(
+        \\pub const Profile = struct {{
+        \\    name: [:0]const u8,
+        \\    family: []const u8,
+        \\    version: u32,
+        \\    platform: ?[]const u8,
+        \\    safari_major: ?u32,
+        \\}};
+        \\
         \\pub const Alias = struct {{
         \\    alias: []const u8,
         \\    profile: [:0]const u8,
+        \\}};
+        \\
+        \\pub const profiles = [_]Profile{{
+        \\
+    , .{}) catch @panic("OOM");
+    for (profiles) |profile| {
+        const platform = if (profile.platform) |p| b.fmt("\"{s}\"", .{p}) else "null";
+        const safari_major = if (profile.safari_major) |major| b.fmt("{d}", .{major}) else "null";
+        w.print(
+            "    .{{ .name = \"{s}\", .family = \"{s}\", .version = {d}, .platform = {s}, .safari_major = {s} }},\n",
+            .{ profile.name, profile.family, profile.version, platform, safari_major },
+        ) catch @panic("OOM");
+    }
+    w.print(
         \\}};
         \\
         \\pub const aliases = [_]Alias{{

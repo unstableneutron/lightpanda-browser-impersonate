@@ -46,6 +46,27 @@ pub const CDP_KEEPALIVE_CNT: c_int = 3;
 
 const Config = @This();
 
+pub const BrowserIdentity = struct {
+    pub const Brand = struct {
+        brand: []const u8,
+        version: []const u8,
+    };
+
+    user_agent: [:0]const u8,
+    ua_platform: []const u8,
+    navigator_platform: []const u8,
+    mobile: bool,
+    ua_full_version: []const u8,
+    brands: []Brand,
+
+    pub fn deinit(self: BrowserIdentity, allocator: Allocator) void {
+        allocator.free(self.user_agent);
+        allocator.free(self.ua_full_version);
+        for (self.brands) |brand| allocator.free(brand.version);
+        allocator.free(self.brands);
+    }
+};
+
 fn logFilterScopesValidator(allocator: Allocator, args: *std.process.ArgIterator, list: *std.ArrayList(log.Scope)) !void {
     const str = args.next() orelse return error.InvalidOption;
 
@@ -186,13 +207,24 @@ pub const Mode = Commands.Union;
 mode: Mode,
 exec_name: []const u8,
 impersonate_profile: ?[:0]const u8,
+browser_identity: ?BrowserIdentity,
 http_headers: HttpHeaders,
 
 pub fn init(allocator: Allocator, exec_name: []const u8, mode: Mode) !Config {
+    const impersonate_profile = try resolveImpersonateProfile(allocator, mode);
+    errdefer if (impersonate_profile) |profile| allocator.free(profile);
+
+    const browser_identity = if (impersonate_profile) |profile|
+        try browserIdentityForImpersonateProfile(allocator, profile)
+    else
+        null;
+    errdefer if (browser_identity) |identity| identity.deinit(allocator);
+
     var config = Config{
         .mode = mode,
         .exec_name = exec_name,
-        .impersonate_profile = try resolveImpersonateProfile(allocator, mode),
+        .impersonate_profile = impersonate_profile,
+        .browser_identity = browser_identity,
         .http_headers = undefined,
     };
     config.http_headers = try HttpHeaders.init(allocator, &config);
@@ -201,6 +233,12 @@ pub fn init(allocator: Allocator, exec_name: []const u8, mode: Mode) !Config {
 
 pub fn deinit(self: *const Config, allocator: Allocator) void {
     self.http_headers.deinit(allocator);
+    if (self.browser_identity) |identity| identity.deinit(allocator);
+    if (self.impersonate_profile) |profile| allocator.free(profile);
+}
+
+pub fn browserIdentity(self: *const Config) ?BrowserIdentity {
+    return self.browser_identity;
 }
 
 pub fn tlsVerifyHost(self: *const Config) bool {
@@ -363,6 +401,59 @@ fn canonicalizeImpersonateAlias(allocator: Allocator, profile: []const u8) ![]co
     return try out.toOwnedSlice(allocator);
 }
 
+fn browserIdentityForImpersonateProfile(allocator: Allocator, profile_name: []const u8) !?BrowserIdentity {
+    const profile = lookupImpersonateProfile(profile_name) orelse return null;
+    if (std.mem.eql(u8, profile.family, "chrome")) {
+        return try chromiumBrowserIdentity(allocator, profile);
+    }
+    return null;
+}
+
+fn lookupImpersonateProfile(profile_name: []const u8) ?curl_impersonate_profiles.Profile {
+    for (curl_impersonate_profiles.profiles) |profile| {
+        if (std.mem.eql(u8, profile.name, profile_name)) return profile;
+    }
+    return null;
+}
+
+fn chromiumBrowserIdentity(
+    allocator: Allocator,
+    profile: curl_impersonate_profiles.Profile,
+) !BrowserIdentity {
+    const full_version = try std.fmt.allocPrint(allocator, "{d}.0.0.0", .{profile.version});
+    errdefer allocator.free(full_version);
+
+    const user_agent = if (profile.platform) |platform|
+        if (std.mem.eql(u8, platform, "android"))
+            try std.fmt.allocPrintSentinel(allocator, "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{s} Mobile Safari/537.36", .{full_version}, 0)
+        else
+            try std.fmt.allocPrintSentinel(allocator, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{s} Safari/537.36", .{full_version}, 0)
+    else
+        try std.fmt.allocPrintSentinel(allocator, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{s} Safari/537.36", .{full_version}, 0);
+    errdefer allocator.free(user_agent);
+
+    const major = try std.fmt.allocPrint(allocator, "{d}", .{profile.version});
+    errdefer allocator.free(major);
+
+    var brands = try allocator.alloc(BrowserIdentity.Brand, 3);
+    errdefer allocator.free(brands);
+    brands[0] = .{ .brand = "Chromium", .version = try allocator.dupe(u8, major) };
+    errdefer allocator.free(brands[0].version);
+    brands[1] = .{ .brand = "Not-A.Brand", .version = try allocator.dupe(u8, "24") };
+    errdefer allocator.free(brands[1].version);
+    brands[2] = .{ .brand = "Google Chrome", .version = major };
+
+    const is_android = if (profile.platform) |platform| std.mem.eql(u8, platform, "android") else false;
+    return .{
+        .user_agent = user_agent,
+        .ua_platform = if (is_android) "Android" else "macOS",
+        .navigator_platform = if (is_android) "Linux armv8l" else "MacIntel",
+        .mobile = is_android,
+        .ua_full_version = full_version,
+        .brands = brands,
+    };
+}
+
 fn expectNormalizedImpersonateProfile(input: []const u8, expected: []const u8) !void {
     const actual = (try normalizeImpersonateProfile(std.testing.allocator, input)).?;
     defer std.testing.allocator.free(actual);
@@ -388,6 +479,30 @@ test "normalizeImpersonateProfile treats hyphen and underscore aliases equivalen
     try expectNormalizedImpersonateProfile("safari_ios26", "safari260_ios");
     try expectNormalizedImpersonateProfile("chrome-android", "chrome131_android");
     try expectNormalizedImpersonateProfile("chrome_mobile", "chrome131_android");
+}
+
+test "browserIdentityForImpersonateProfile exposes Chrome JS identity" {
+    var identity = (try browserIdentityForImpersonateProfile(std.testing.allocator, "chrome146")).?;
+    defer identity.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualStrings("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36", identity.user_agent);
+    try std.testing.expectEqualStrings("macOS", identity.ua_platform);
+    try std.testing.expectEqualStrings("MacIntel", identity.navigator_platform);
+    try std.testing.expectEqual(false, identity.mobile);
+    try std.testing.expectEqual(@as(usize, 3), identity.brands.len);
+    try std.testing.expectEqualStrings("Chromium", identity.brands[0].brand);
+    try std.testing.expectEqualStrings("146", identity.brands[0].version);
+    try std.testing.expectEqualStrings("Google Chrome", identity.brands[2].brand);
+}
+
+test "browserIdentityForImpersonateProfile exposes Chrome Android JS identity" {
+    var identity = (try browserIdentityForImpersonateProfile(std.testing.allocator, "chrome131_android")).?;
+    defer identity.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualStrings("Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36", identity.user_agent);
+    try std.testing.expectEqualStrings("Android", identity.ua_platform);
+    try std.testing.expectEqualStrings("Linux armv8l", identity.navigator_platform);
+    try std.testing.expectEqual(true, identity.mobile);
 }
 
 pub fn httpCacheDir(self: *const Config) ?[]const u8 {
