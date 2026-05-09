@@ -923,7 +923,9 @@ pub const JsApi = struct {
     pub const isSecureContext = bridge.property(false, .{ .template = false });
 
     pub const innerWidth = bridge.property(1920, .{ .template = false });
-    pub const innerHeight = bridge.property(1080, .{ .template = false });
+    pub const innerHeight = bridge.property(947, .{ .template = false });
+    pub const outerWidth = bridge.property(1920, .{ .template = false });
+    pub const outerHeight = bridge.property(1080, .{ .template = false });
     pub const devicePixelRatio = bridge.property(1, .{ .template = false });
 
     pub const opener = bridge.accessor(Window.getOpener, null, .{});
