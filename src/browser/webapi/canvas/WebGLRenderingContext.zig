@@ -159,12 +159,54 @@ pub const Extension = union(enum) {
     };
 };
 
-/// This actually takes "GLenum" which, in fact, is a fancy way to say number.
-/// Return value also depends on what's being passed as `pname`; we don't really
-/// support any though.
-pub fn getParameter(_: *const WebGLRenderingContext, pname: u32) []const u8 {
-    _ = pname;
-    return "";
+pub const VENDOR: u32 = 0x1F00;
+pub const RENDERER: u32 = 0x1F01;
+pub const VERSION: u32 = 0x1F02;
+pub const SHADING_LANGUAGE_VERSION: u32 = 0x8B8C;
+
+pub const MAX_TEXTURE_SIZE: u32 = 0x0D33;
+pub const MAX_RENDERBUFFER_SIZE: u32 = 0x84E8;
+
+/// This intentionally exposes metadata only. It does not make WebGL rendering
+/// functional; `HTMLCanvasElement.getContext("webgl")` only returns this object
+/// when `--webgl=metadata` is set.
+pub fn getParameter(_: *const WebGLRenderingContext, pname: u32, frame: *Frame) !js.Value {
+    const identity = frame._session.browser.app.network.config.browserIdentity();
+    const local = frame.js.local.?;
+    switch (pname) {
+        VENDOR => return local.zigValueToJs(if (identity) |id| switch (id.family) {
+            .firefox => "Mozilla",
+            else => "WebKit",
+        } else "WebKit", .{}),
+        RENDERER => return local.zigValueToJs(if (identity) |id| switch (id.family) {
+            .firefox => "Apple M1, or similar",
+            else => "WebKit WebGL",
+        } else "WebKit WebGL", .{}),
+        VERSION => return local.zigValueToJs(if (identity) |id| switch (id.family) {
+            .chrome => "WebGL 1.0 (OpenGL ES 2.0 Chromium)",
+            else => "WebGL 1.0",
+        } else "WebGL 1.0 (OpenGL ES 2.0 Chromium)", .{}),
+        SHADING_LANGUAGE_VERSION => return local.zigValueToJs(if (identity) |id| switch (id.family) {
+            .chrome => "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)",
+            .safari => "WebGL GLSL ES 1.0 (1.0)",
+            else => "WebGL GLSL ES 1.0",
+        } else "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)", .{}),
+        Extension.Type.WEBGL_debug_renderer_info.UNMASKED_VENDOR_WEBGL => return local.zigValueToJs(if (identity) |id| switch (id.family) {
+            .firefox => "Apple",
+            .safari => "Apple Inc.",
+            else => "Google Inc. (Apple)",
+        } else "Google Inc. (Apple)", .{}),
+        Extension.Type.WEBGL_debug_renderer_info.UNMASKED_RENDERER_WEBGL => return local.zigValueToJs(if (identity) |id| switch (id.family) {
+            .firefox => "Apple M1, or similar",
+            .safari => "Apple GPU",
+            else => "ANGLE (Apple, ANGLE Metal Renderer: Apple GPU, Unspecified Version)",
+        } else "ANGLE (Apple, ANGLE Metal Renderer: Apple GPU, Unspecified Version)", .{}),
+        MAX_TEXTURE_SIZE, MAX_RENDERBUFFER_SIZE => return local.zigValueToJs(@as(u32, if (identity) |id| switch (id.family) {
+            .firefox => 8192,
+            else => 16384,
+        } else 16384), .{}),
+        else => return local.zigValueToJs("", .{}),
+    }
 }
 
 /// Enables a WebGL extension.
@@ -198,6 +240,13 @@ pub const JsApi = struct {
         pub const prototype_chain = bridge.prototypeChain();
         pub var class_id: bridge.ClassId = undefined;
     };
+
+    pub const VENDOR = bridge.property(WebGLRenderingContext.VENDOR, .{ .template = false, .readonly = true });
+    pub const RENDERER = bridge.property(WebGLRenderingContext.RENDERER, .{ .template = false, .readonly = true });
+    pub const VERSION = bridge.property(WebGLRenderingContext.VERSION, .{ .template = false, .readonly = true });
+    pub const SHADING_LANGUAGE_VERSION = bridge.property(WebGLRenderingContext.SHADING_LANGUAGE_VERSION, .{ .template = false, .readonly = true });
+    pub const MAX_TEXTURE_SIZE = bridge.property(WebGLRenderingContext.MAX_TEXTURE_SIZE, .{ .template = false, .readonly = true });
+    pub const MAX_RENDERBUFFER_SIZE = bridge.property(WebGLRenderingContext.MAX_RENDERBUFFER_SIZE, .{ .template = false, .readonly = true });
 
     pub const getParameter = bridge.function(WebGLRenderingContext.getParameter, .{});
     pub const getExtension = bridge.function(WebGLRenderingContext.getExtension, .{});

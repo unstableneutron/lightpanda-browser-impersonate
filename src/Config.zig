@@ -92,6 +92,7 @@ const CommonOptions = .{
     .{ .name = "log_filter_scopes", .type = log.Scope, .multiple = true, .validator = logFilterScopesValidator },
     .{ .name = "user_agent_suffix", .type = ?[]const u8 },
     .{ .name = "impersonate", .type = ?[:0]const u8 },
+    .{ .name = "webgl", .type = ?WebGLMode },
     .{ .name = "http_cache_dir", .type = ?[]const u8 },
     .{ .name = "web_bot_auth_key_file", .type = ?[]const u8 },
     .{ .name = "web_bot_auth_keyid", .type = ?[]const u8 },
@@ -336,6 +337,13 @@ pub fn impersonateProfile(self: *const Config) ?[:0]const u8 {
     return self.impersonate_profile;
 }
 
+pub fn webglMode(self: *const Config) WebGLMode {
+    return switch (self.mode) {
+        inline .serve, .fetch, .mcp => |opts| opts.webgl orelse .off,
+        .help, .version => .off,
+    };
+}
+
 fn resolveImpersonateProfile(allocator: Allocator, mode: Mode) !?[:0]const u8 {
     const cli_profile = switch (mode) {
         inline .serve, .fetch, .mcp => |opts| opts.impersonate,
@@ -542,6 +550,11 @@ pub const WaitUntil = enum {
     domcontentloaded,
     networkidle,
     done,
+};
+
+pub const WebGLMode = enum {
+    off,
+    metadata,
 };
 
 /// Pre-formatted HTTP headers for reuse across Http and Client.

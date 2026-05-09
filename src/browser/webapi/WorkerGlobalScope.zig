@@ -43,6 +43,7 @@ const WorkerLocation = @import("WorkerLocation.zig");
 const MessageEvent = @import("event/MessageEvent.zig");
 const ErrorEvent = @import("event/ErrorEvent.zig");
 const Fetch = @import("net/Fetch.zig");
+const Performance = @import("Performance.zig");
 
 const builtin = @import("builtin");
 const IS_DEBUG = builtin.mode == .Debug;
@@ -93,6 +94,7 @@ _closed: bool = false,
 _proto: *EventTarget,
 _console: Console = .init,
 _crypto: Crypto = .init,
+_performance: Performance,
 _on_error: ?JS.Function.Global = null,
 _on_rejection_handled: ?JS.Function.Global = null,
 _on_unhandled_rejection: ?JS.Function.Global = null,
@@ -129,6 +131,7 @@ pub fn init(worker: *Worker, url: [:0]const u8) !*WorkerGlobalScope {
         ._event_manager = .init(arena),
         ._script_manager = undefined,
         ._location = .{ ._url = url },
+        ._performance = Performance.init(),
     });
     errdefer factory.destroy(self);
 
@@ -143,6 +146,20 @@ pub fn init(worker: *Worker, url: [:0]const u8) !*WorkerGlobalScope {
         .identity_arena = arena,
         .identity = &self._identity,
     });
+
+    var ls: JS.Local.Scope = undefined;
+    self.js.localScope(&ls);
+    defer ls.deinit();
+    try ls.local.eval(
+        \\(() => {
+        \\  const origin = Date.now();
+        \\  const proto = typeof Performance === 'function' ? Performance.prototype : Object.prototype;
+        \\  const p = Object.create(proto);
+        \\  Object.defineProperty(p, 'timeOrigin', { value: origin, enumerable: true });
+        \\  Object.defineProperty(p, 'now', { value: function now() { return Math.max(0, Date.now() - origin); }, enumerable: true });
+        \\  Object.defineProperty(globalThis, 'performance', { value: p, configurable: true });
+        \\})();
+    , "worker-performance-shim");
 
     return self;
 }
@@ -216,6 +233,10 @@ pub fn getSelf(self: *WorkerGlobalScope) *WorkerGlobalScope {
 
 pub fn getConsole(self: *WorkerGlobalScope) *Console {
     return &self._console;
+}
+
+pub fn getPerformance(self: *WorkerGlobalScope) *Performance {
+    return &self._performance;
 }
 
 pub fn getCrypto(self: *WorkerGlobalScope) *Crypto {
@@ -574,6 +595,7 @@ pub const JsApi = struct {
     pub const self = bridge.accessor(WorkerGlobalScope.getSelf, null, .{});
     pub const console = bridge.accessor(WorkerGlobalScope.getConsole, null, .{});
     pub const crypto = bridge.accessor(WorkerGlobalScope.getCrypto, null, .{});
+    pub const performance = bridge.accessor(WorkerGlobalScope.getPerformance, null, .{});
     pub const location = bridge.accessor(WorkerGlobalScope.getLocation, null, .{});
 
     pub const onerror = bridge.accessor(WorkerGlobalScope.getOnError, WorkerGlobalScope.setOnError, .{});

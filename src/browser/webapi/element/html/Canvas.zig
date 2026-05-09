@@ -26,12 +26,15 @@ const HtmlElement = @import("../Html.zig");
 const CanvasRenderingContext2D = @import("../../canvas/CanvasRenderingContext2D.zig");
 const WebGLRenderingContext = @import("../../canvas/WebGLRenderingContext.zig");
 const OffscreenCanvas = @import("../../canvas/OffscreenCanvas.zig");
+const CanvasBitmap = @import("../../canvas/CanvasBitmap.zig");
+const Blob = @import("../../Blob.zig");
 
 const Execution = js.Execution;
 
 const Canvas = @This();
 _proto: *HtmlElement,
 _cached: ?DrawingContext = null,
+_bitmap: CanvasBitmap = .{},
 
 pub fn asElement(self: *Canvas) *Element {
     return self._proto._proto;
@@ -51,6 +54,7 @@ pub fn getWidth(self: *const Canvas) u32 {
 pub fn setWidth(self: *Canvas, value: u32, frame: *Frame) !void {
     const str = try std.fmt.allocPrint(frame.call_arena, "{d}", .{value});
     try self.asElement().setAttributeSafe(comptime .wrap("width"), .wrap(str), frame);
+    self._bitmap.reset();
 }
 
 pub fn getHeight(self: *const Canvas) u32 {
@@ -61,6 +65,7 @@ pub fn getHeight(self: *const Canvas) u32 {
 pub fn setHeight(self: *Canvas, value: u32, frame: *Frame) !void {
     const str = try std.fmt.allocPrint(frame.call_arena, "{d}", .{value});
     try self.asElement().setAttributeSafe(comptime .wrap("height"), .wrap(str), frame);
+    self._bitmap.reset();
 }
 
 /// Since there's no base class rendering contexts inherit from,
@@ -95,6 +100,10 @@ pub fn getContext(self: *Canvas, context_type: []const u8, frame: *Frame) !?Draw
         // Spec-correct signal for "no WebGL" is null, so apps that check
         // (Three.js does) can degrade gracefully.
         if (std.mem.eql(u8, context_type, "webgl") or std.mem.eql(u8, context_type, "experimental-webgl")) {
+            if (frame._session.browser.app.network.config.webglMode() == .metadata) {
+                const ctx = try frame._factory.create(WebGLRenderingContext{});
+                break :blk .{ .webgl = ctx };
+            }
             return null;
         }
         return null;
@@ -105,6 +114,26 @@ pub fn getContext(self: *Canvas, context_type: []const u8, frame: *Frame) !?Draw
 
 /// Transfers control of the canvas to an OffscreenCanvas.
 /// Returns an OffscreenCanvas with the same dimensions.
+pub fn toDataURL(self: *Canvas, maybe_type: ?[]const u8, frame: *Frame) ![]const u8 {
+    const typ = maybe_type orelse "image/png";
+    if (!std.ascii.eqlIgnoreCase(typ, "image/png")) return "data:image/png;base64,";
+    const png = try self._bitmap.encodePng(frame.call_arena, self.getWidth(), self.getHeight());
+    const encoder = std.base64.standard.Encoder;
+    const prefix = "data:image/png;base64,";
+    const encoded_len = encoder.calcSize(png.len);
+    const out = try frame.call_arena.alloc(u8, prefix.len + encoded_len);
+    @memcpy(out[0..prefix.len], prefix);
+    _ = encoder.encode(out[prefix.len..], png);
+    return out;
+}
+
+pub fn toBlob(self: *Canvas, callback: js.Function, maybe_type: ?[]const u8, frame: *Frame) !void {
+    const typ = maybe_type orelse "image/png";
+    const png = try self._bitmap.encodePng(frame.call_arena, self.getWidth(), self.getHeight());
+    const blob = try Blob.initFromBytes(png, if (std.ascii.eqlIgnoreCase(typ, "image/png")) "image/png" else "image/png", false, frame._page);
+    _ = try callback.call(void, .{blob});
+}
+
 pub fn transferControlToOffscreen(self: *Canvas, exec: *Execution) !*OffscreenCanvas {
     const width = self.getWidth();
     const height = self.getHeight();
@@ -123,5 +152,7 @@ pub const JsApi = struct {
     pub const width = bridge.accessor(Canvas.getWidth, Canvas.setWidth, .{});
     pub const height = bridge.accessor(Canvas.getHeight, Canvas.setHeight, .{});
     pub const getContext = bridge.function(Canvas.getContext, .{});
+    pub const toDataURL = bridge.function(Canvas.toDataURL, .{});
+    pub const toBlob = bridge.function(Canvas.toBlob, .{});
     pub const transferControlToOffscreen = bridge.function(Canvas.transferControlToOffscreen, .{});
 };

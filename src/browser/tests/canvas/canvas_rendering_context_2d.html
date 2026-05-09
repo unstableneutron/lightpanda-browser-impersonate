@@ -71,6 +71,8 @@
 <script id="CanvasRenderingContext2D#putImageData">
 {
   const element = document.createElement("canvas");
+  element.width = 20;
+  element.height = 20;
   const ctx = element.getContext("2d");
 
   const imageData = ctx.createImageData(10, 10);
@@ -81,9 +83,14 @@
   imageData.data[2] = 0;
   imageData.data[3] = 255;
 
-  // putImageData should not throw.
   ctx.putImageData(imageData, 0, 0);
-  ctx.putImageData(imageData, 10, 20);
+  const stored = ctx.getImageData(0, 0, 1, 1);
+  testing.expectEqual(255, stored.data[0]);
+  testing.expectEqual(0, stored.data[1]);
+  testing.expectEqual(0, stored.data[2]);
+  testing.expectEqual(255, stored.data[3]);
+
+  ctx.putImageData(imageData, 10, 10);
   // With dirty rect parameters.
   ctx.putImageData(imageData, 0, 0, 0, 0, 5, 5);
 }
@@ -121,6 +128,64 @@
   testing.expectError('Index or size', () => ctx.getImageData(0, 0, 10, 0));
   testing.expectError('Index or size', () => ctx.getImageData(0, 0, -5, 10));
   testing.expectError('Index or size', () => ctx.getImageData(0, 0, 10, -5));
+}
+</script>
+
+<script id="CanvasRenderingContext2D#fillRect_clearRect_drawImage">
+{
+  const src = document.createElement("canvas");
+  src.width = 8;
+  src.height = 8;
+  const sctx = src.getContext("2d");
+  sctx.fillStyle = "red";
+  sctx.fillRect(0, 0, 4, 8);
+  sctx.fillStyle = "blue";
+  sctx.fillRect(4, 0, 4, 8);
+
+  let left = sctx.getImageData(0, 0, 1, 1).data;
+  testing.expectEqual(255, left[0]);
+  testing.expectEqual(0, left[1]);
+  testing.expectEqual(0, left[2]);
+  testing.expectEqual(255, left[3]);
+
+  let right = sctx.getImageData(7, 0, 1, 1).data;
+  testing.expectEqual(0, right[0]);
+  testing.expectEqual(0, right[1]);
+  testing.expectEqual(255, right[2]);
+  testing.expectEqual(255, right[3]);
+
+  sctx.clearRect(0, 0, 1, 1);
+  const cleared = sctx.getImageData(0, 0, 1, 1).data;
+  testing.expectEqual(0, cleared[0]);
+  testing.expectEqual(0, cleared[1]);
+  testing.expectEqual(0, cleared[2]);
+  testing.expectEqual(0, cleared[3]);
+
+  const dst = document.createElement("canvas");
+  dst.width = 8;
+  dst.height = 8;
+  const dctx = dst.getContext("2d");
+  testing.expectEqual("function", typeof dctx.drawImage);
+  dctx.drawImage(src, 0, 0);
+  const copied = dctx.getImageData(7, 0, 1, 1).data;
+  testing.expectEqual(0, copied[0]);
+  testing.expectEqual(0, copied[1]);
+  testing.expectEqual(255, copied[2]);
+  testing.expectEqual(255, copied[3]);
+}
+</script>
+
+<script id="CanvasRenderingContext2D#measureText_export">
+{
+  const element = document.createElement("canvas");
+  const ctx = element.getContext("2d");
+  testing.expectEqual("function", typeof ctx.measureText);
+  const metrics = ctx.measureText("Cwm fjordbank glyphs 😃");
+  testing.expectEqual("number", typeof metrics.width);
+  testing.expectTrue(metrics.width > 0);
+  testing.expectEqual("function", typeof element.toDataURL);
+  testing.expectTrue(element.toDataURL("image/png").startsWith("data:image/png;base64,"));
+  testing.expectEqual("function", typeof element.toBlob);
 }
 </script>
 

@@ -221,6 +221,13 @@
       // URL.createObjectURL / revokeObjectURL
       testing.expectEqual(true, r.blob_url_is_blob);
 
+      // performance
+      testing.expectEqual('object', r.performance_type, { id: 'worker-performance-type' });
+      testing.expectEqual('function', r.performance_now_type, { id: 'worker-performance-now-type' });
+      testing.expectEqual('number', r.performance_time_origin_type, { id: 'worker-performance-time-origin-type' });
+      testing.expectEqual(true, r.performance_now_non_negative, { id: 'worker-performance-now-non-negative' });
+      testing.expectEqual(true, r.performance_now_monotonic, { id: 'worker-performance-now-monotonic' });
+
       // WorkerLocation
       testing.expectEqual(true, r.loc_is_worker_location);
       testing.expectEqual(true, r.loc_identity_stable);

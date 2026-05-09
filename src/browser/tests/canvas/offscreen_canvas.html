@@ -41,12 +41,15 @@
 <script id=OffscreenCanvas#convertToBlob>
 {
   const canvas = new OffscreenCanvas(64, 64);
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "red";
+  ctx.fillRect(0, 0, 1, 1);
   const promise = canvas.convertToBlob();
   testing.expectEqual(true, promise instanceof Promise);
-  // The promise should resolve to a Blob (even if empty)
   promise.then(blob => {
     testing.expectEqual(true, blob instanceof Blob);
-    testing.expectEqual(blob.size, 0); // Empty since no rendering
+    testing.expectTrue(blob.size > 0);
+    testing.expectEqual("image/png", blob.type);
   });
 }
 </script>
@@ -79,6 +82,27 @@
   testing.expectEqual(imageData.data[1], 0);
   testing.expectEqual(imageData.data[2], 0);
   testing.expectEqual(imageData.data[3], 0);
+
+  ctx.fillStyle = "red";
+  ctx.fillRect(0, 0, 2, 2);
+  const drawn = ctx.getImageData(0, 0, 1, 1).data;
+  testing.expectEqual(255, drawn[0]);
+  testing.expectEqual(0, drawn[1]);
+  testing.expectEqual(0, drawn[2]);
+  testing.expectEqual(255, drawn[3]);
+
+  const dst = new OffscreenCanvas(100, 50);
+  const dctx = dst.getContext("2d");
+  testing.expectEqual("function", typeof dctx.drawImage);
+  dctx.drawImage(canvas, 0, 0);
+  const copied = dctx.getImageData(0, 0, 1, 1).data;
+  testing.expectEqual(255, copied[0]);
+  testing.expectEqual(0, copied[1]);
+  testing.expectEqual(0, copied[2]);
+  testing.expectEqual(255, copied[3]);
+
+  testing.expectEqual("function", typeof dctx.measureText);
+  testing.expectTrue(dctx.measureText("abc").width > 0);
 
   // Zero or negative dimensions should throw.
   testing.expectError('Index or size', () => ctx.getImageData(0, 0, 0, 10));

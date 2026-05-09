@@ -13,6 +13,9 @@ def test_config_accepts_cli_and_env_impersonation() -> None:
     cli = read("src/cli.zig")
 
     assert '.{ .name = "impersonate", .type = ?[:0]const u8 }' in config
+    assert '.{ .name = "webgl", .type = ?WebGLMode }' in config
+    assert "pub const WebGLMode = enum" in config
+    assert "pub fn webglMode" in config
     assert "LIGHTPANDA_IMPERSONATE" in config
     assert "pub fn impersonateProfile" in config
     assert "curl_impersonate_profiles.aliases" in config

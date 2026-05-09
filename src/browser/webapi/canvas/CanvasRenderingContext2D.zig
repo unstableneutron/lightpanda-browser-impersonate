@@ -24,11 +24,16 @@ const color = @import("../../color.zig");
 const Frame = @import("../../Frame.zig");
 
 const Canvas = @import("../element/html/Canvas.zig");
+const OffscreenCanvas = @import("OffscreenCanvas.zig");
 const ImageData = @import("../ImageData.zig");
 
 /// This class doesn't implement a `constructor`.
 /// It can be obtained with a call to `HTMLCanvasElement#getContext`.
 /// https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D
+pub fn registerTypes() []const type {
+    return &.{ CanvasRenderingContext2D, TextMetrics };
+}
+
 const CanvasRenderingContext2D = @This();
 /// Reference to the parent canvas element.
 /// https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/canvas
@@ -80,12 +85,23 @@ pub fn createImageData(
     }
 }
 
-pub fn putImageData(_: *const CanvasRenderingContext2D, _: *ImageData, _: f64, _: f64, _: ?f64, _: ?f64, _: ?f64, _: ?f64) void {}
+pub fn putImageData(self: *CanvasRenderingContext2D, image_data: *ImageData, dx: f64, dy: f64, _: ?f64, _: ?f64, _: ?f64, _: ?f64, frame: *Frame) !void {
+    try self._canvas._bitmap.putImageData(
+        frame.arena,
+        self._canvas.getWidth(),
+        self._canvas.getHeight(),
+        image_data.bytes(frame.js.local.?),
+        image_data._width,
+        image_data._height,
+        @intFromFloat(@round(dx)),
+        @intFromFloat(@round(dy)),
+    );
+}
 
 pub fn getImageData(
-    _: *const CanvasRenderingContext2D,
-    _: i32, // sx
-    _: i32, // sy
+    self: *CanvasRenderingContext2D,
+    sx: i32,
+    sy: i32,
     sw: i32,
     sh: i32,
     frame: *Frame,
@@ -93,7 +109,8 @@ pub fn getImageData(
     if (sw <= 0 or sh <= 0) {
         return error.IndexSizeError;
     }
-    return ImageData.init(@intCast(sw), @intCast(sh), null, frame);
+    const bytes = try self._canvas._bitmap.getImageData(frame.call_arena, self._canvas.getWidth(), self._canvas.getHeight(), sx, sy, @intCast(sw), @intCast(sh));
+    return ImageData.initWithBytes(@intCast(sw), @intCast(sh), bytes, null, frame);
 }
 
 pub fn save(_: *CanvasRenderingContext2D) void {}
@@ -105,8 +122,13 @@ pub fn transform(_: *CanvasRenderingContext2D, _: f64, _: f64, _: f64, _: f64, _
 pub fn setTransform(_: *CanvasRenderingContext2D, _: f64, _: f64, _: f64, _: f64, _: f64, _: f64) void {}
 pub fn resetTransform(_: *CanvasRenderingContext2D) void {}
 pub fn setStrokeStyle(_: *CanvasRenderingContext2D, _: []const u8) void {}
-pub fn clearRect(_: *CanvasRenderingContext2D, _: f64, _: f64, _: f64, _: f64) void {}
-pub fn fillRect(_: *CanvasRenderingContext2D, _: f64, _: f64, _: f64, _: f64) void {}
+pub fn clearRect(self: *CanvasRenderingContext2D, x: f64, y: f64, w: f64, h: f64, frame: *Frame) !void {
+    try self._canvas._bitmap.clearRect(frame.arena, self._canvas.getWidth(), self._canvas.getHeight(), x, y, w, h);
+}
+
+pub fn fillRect(self: *CanvasRenderingContext2D, x: f64, y: f64, w: f64, h: f64, frame: *Frame) !void {
+    try self._canvas._bitmap.fillRect(frame.arena, self._canvas.getWidth(), self._canvas.getHeight(), x, y, w, h, self._fill_style);
+}
 pub fn strokeRect(_: *CanvasRenderingContext2D, _: f64, _: f64, _: f64, _: f64) void {}
 pub fn beginPath(_: *CanvasRenderingContext2D) void {}
 pub fn closePath(_: *CanvasRenderingContext2D) void {}
@@ -120,8 +142,82 @@ pub fn rect(_: *CanvasRenderingContext2D, _: f64, _: f64, _: f64, _: f64) void {
 pub fn fill(_: *CanvasRenderingContext2D) void {}
 pub fn stroke(_: *CanvasRenderingContext2D) void {}
 pub fn clip(_: *CanvasRenderingContext2D) void {}
-pub fn fillText(_: *CanvasRenderingContext2D, _: []const u8, _: f64, _: f64, _: ?f64) void {}
-pub fn strokeText(_: *CanvasRenderingContext2D, _: []const u8, _: f64, _: f64, _: ?f64) void {}
+const ImageSource = union(enum) {
+    canvas: *Canvas,
+    offscreen_canvas: *OffscreenCanvas,
+};
+
+pub fn drawImage(self: *CanvasRenderingContext2D, source: ImageSource, dx: f64, dy: f64, frame: *Frame) !void {
+    switch (source) {
+        .canvas => |canvas| try self._canvas._bitmap.drawImage(frame.arena, self._canvas.getWidth(), self._canvas.getHeight(), &canvas._bitmap, canvas.getWidth(), canvas.getHeight(), @intFromFloat(@round(dx)), @intFromFloat(@round(dy))),
+        .offscreen_canvas => |canvas| try self._canvas._bitmap.drawImage(frame.arena, self._canvas.getWidth(), self._canvas.getHeight(), &canvas._bitmap, canvas._width, canvas._height, @intFromFloat(@round(dx)), @intFromFloat(@round(dy))),
+    }
+}
+
+pub fn measureText(_: *CanvasRenderingContext2D, text: []const u8, frame: *Frame) !*TextMetrics {
+    return TextMetrics.init(text, frame);
+}
+
+pub fn fillText(self: *CanvasRenderingContext2D, text: []const u8, x: f64, y: f64, _: ?f64, frame: *Frame) !void {
+    const width = @max(1, @as(u32, @intFromFloat(@ceil(estimateTextWidth(text)))));
+    try self._canvas._bitmap.fillRect(frame.arena, self._canvas.getWidth(), self._canvas.getHeight(), x, y - 12, @floatFromInt(width), 14, self._fill_style);
+}
+
+pub fn strokeText(self: *CanvasRenderingContext2D, text: []const u8, x: f64, y: f64, max_width: ?f64, frame: *Frame) !void {
+    try self.fillText(text, x, y, max_width, frame);
+}
+
+const TextMetrics = struct {
+    width: f64,
+    actual_bounding_box_ascent: f64 = 10,
+    actual_bounding_box_descent: f64 = 3,
+    font_bounding_box_ascent: f64 = 10,
+    font_bounding_box_descent: f64 = 3,
+
+    pub fn init(text: []const u8, frame: *Frame) !*TextMetrics {
+        return frame._factory.create(TextMetrics{ .width = estimateTextWidth(text) });
+    }
+
+    pub fn getWidth(self: *const TextMetrics) f64 {
+        return self.width;
+    }
+
+    pub fn getActualBoundingBoxAscent(self: *const TextMetrics) f64 {
+        return self.actual_bounding_box_ascent;
+    }
+
+    pub fn getActualBoundingBoxDescent(self: *const TextMetrics) f64 {
+        return self.actual_bounding_box_descent;
+    }
+
+    pub fn getFontBoundingBoxAscent(self: *const TextMetrics) f64 {
+        return self.font_bounding_box_ascent;
+    }
+
+    pub fn getFontBoundingBoxDescent(self: *const TextMetrics) f64 {
+        return self.font_bounding_box_descent;
+    }
+
+    pub const JsApi = struct {
+        pub const bridge = js.Bridge(TextMetrics);
+
+        pub const Meta = struct {
+            pub const name = "TextMetrics";
+            pub const prototype_chain = bridge.prototypeChain();
+            pub var class_id: bridge.ClassId = undefined;
+        };
+
+        pub const width = bridge.accessor(TextMetrics.getWidth, null, .{});
+        pub const actualBoundingBoxAscent = bridge.accessor(TextMetrics.getActualBoundingBoxAscent, null, .{});
+        pub const actualBoundingBoxDescent = bridge.accessor(TextMetrics.getActualBoundingBoxDescent, null, .{});
+        pub const fontBoundingBoxAscent = bridge.accessor(TextMetrics.getFontBoundingBoxAscent, null, .{});
+        pub const fontBoundingBoxDescent = bridge.accessor(TextMetrics.getFontBoundingBoxDescent, null, .{});
+    };
+};
+
+fn estimateTextWidth(text: []const u8) f64 {
+    return @as(f64, @floatFromInt(std.unicode.utf8CountCodepoints(text) catch text.len)) * 7.5;
+}
 
 pub const JsApi = struct {
     pub const bridge = js.Bridge(CanvasRenderingContext2D);
@@ -148,7 +244,7 @@ pub const JsApi = struct {
     pub const fillStyle = bridge.accessor(CanvasRenderingContext2D.getFillStyle, CanvasRenderingContext2D.setFillStyle, .{});
     pub const createImageData = bridge.function(CanvasRenderingContext2D.createImageData, .{ .dom_exception = true });
 
-    pub const putImageData = bridge.function(CanvasRenderingContext2D.putImageData, .{ .noop = true });
+    pub const putImageData = bridge.function(CanvasRenderingContext2D.putImageData, .{ .dom_exception = true });
     pub const getImageData = bridge.function(CanvasRenderingContext2D.getImageData, .{ .dom_exception = true });
     pub const save = bridge.function(CanvasRenderingContext2D.save, .{ .noop = true });
     pub const restore = bridge.function(CanvasRenderingContext2D.restore, .{ .noop = true });
@@ -158,8 +254,8 @@ pub const JsApi = struct {
     pub const transform = bridge.function(CanvasRenderingContext2D.transform, .{ .noop = true });
     pub const setTransform = bridge.function(CanvasRenderingContext2D.setTransform, .{ .noop = true });
     pub const resetTransform = bridge.function(CanvasRenderingContext2D.resetTransform, .{ .noop = true });
-    pub const clearRect = bridge.function(CanvasRenderingContext2D.clearRect, .{ .noop = true });
-    pub const fillRect = bridge.function(CanvasRenderingContext2D.fillRect, .{ .noop = true });
+    pub const clearRect = bridge.function(CanvasRenderingContext2D.clearRect, .{ .dom_exception = true });
+    pub const fillRect = bridge.function(CanvasRenderingContext2D.fillRect, .{ .dom_exception = true });
     pub const strokeRect = bridge.function(CanvasRenderingContext2D.strokeRect, .{ .noop = true });
     pub const beginPath = bridge.function(CanvasRenderingContext2D.beginPath, .{ .noop = true });
     pub const closePath = bridge.function(CanvasRenderingContext2D.closePath, .{ .noop = true });
@@ -173,8 +269,10 @@ pub const JsApi = struct {
     pub const fill = bridge.function(CanvasRenderingContext2D.fill, .{ .noop = true });
     pub const stroke = bridge.function(CanvasRenderingContext2D.stroke, .{ .noop = true });
     pub const clip = bridge.function(CanvasRenderingContext2D.clip, .{ .noop = true });
-    pub const fillText = bridge.function(CanvasRenderingContext2D.fillText, .{ .noop = true });
-    pub const strokeText = bridge.function(CanvasRenderingContext2D.strokeText, .{ .noop = true });
+    pub const fillText = bridge.function(CanvasRenderingContext2D.fillText, .{ .dom_exception = true });
+    pub const strokeText = bridge.function(CanvasRenderingContext2D.strokeText, .{ .dom_exception = true });
+    pub const drawImage = bridge.function(CanvasRenderingContext2D.drawImage, .{ .dom_exception = true });
+    pub const measureText = bridge.function(CanvasRenderingContext2D.measureText, .{});
 };
 
 const testing = @import("../../../testing.zig");

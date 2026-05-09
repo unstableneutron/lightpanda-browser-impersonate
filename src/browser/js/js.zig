@@ -124,6 +124,10 @@ pub fn ArrayBufferRef(comptime kind: ArrayType) type {
             pub fn local(self: *const Global, l: *const Local) Self {
                 return .{ .local = l, .handle = v8.v8__Global__Get(&self.handle, l.isolate.handle).? };
             }
+
+            pub fn bytes(self: *const Global, l: *const Local) []u8 {
+                return self.local(l).bytes();
+            }
         };
 
         pub fn init(local: *const Local, size: usize) Self {
@@ -159,6 +163,20 @@ pub fn ArrayBufferRef(comptime kind: ArrayType) type {
             };
 
             return .{ .local = local, .handle = handle };
+        }
+
+        pub fn bytes(self: Self) []u8 {
+            const view: *const v8.ArrayBufferView = @ptrCast(self.handle);
+            const byte_len = v8.v8__ArrayBufferView__ByteLength(view);
+            const byte_offset = v8.v8__ArrayBufferView__ByteOffset(view);
+            if (byte_len == 0) return &[_]u8{};
+
+            const array_buffer = v8.v8__ArrayBufferView__Buffer(view);
+            const backing_store_ptr = v8.v8__ArrayBuffer__GetBackingStore(array_buffer);
+            const backing_store_handle = v8.std__shared_ptr__v8__BackingStore__get(&backing_store_ptr) orelse return &[_]u8{};
+            const data = v8.v8__BackingStore__Data(backing_store_handle) orelse return &[_]u8{};
+            const base = @as([*]u8, @ptrCast(data)) + byte_offset;
+            return base[0..byte_len];
         }
 
         pub fn persist(self: *const Self) !Global {

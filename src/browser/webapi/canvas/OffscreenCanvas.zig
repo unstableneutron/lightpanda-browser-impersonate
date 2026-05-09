@@ -20,6 +20,7 @@ const std = @import("std");
 const js = @import("../../js/js.zig");
 
 const Blob = @import("../Blob.zig");
+const CanvasBitmap = @import("CanvasBitmap.zig");
 const OffscreenCanvasRenderingContext2D = @import("OffscreenCanvasRenderingContext2D.zig");
 
 const Execution = js.Execution;
@@ -31,6 +32,8 @@ pub const _prototype_root = true;
 
 _width: u32,
 _height: u32,
+_bitmap: CanvasBitmap = .{},
+_cached: ?DrawingContext = null,
 
 /// Since there's no base class rendering contexts inherit from,
 /// we're using tagged union.
@@ -51,6 +54,7 @@ pub fn getWidth(self: *const OffscreenCanvas) u32 {
 
 pub fn setWidth(self: *OffscreenCanvas, value: u32) void {
     self._width = value;
+    self._bitmap.reset();
 }
 
 pub fn getHeight(self: *const OffscreenCanvas) u32 {
@@ -59,21 +63,28 @@ pub fn getHeight(self: *const OffscreenCanvas) u32 {
 
 pub fn setHeight(self: *OffscreenCanvas, value: u32) void {
     self._height = value;
+    self._bitmap.reset();
 }
 
-pub fn getContext(_: *OffscreenCanvas, context_type: []const u8, exec: *Execution) !?DrawingContext {
+pub fn getContext(self: *OffscreenCanvas, context_type: []const u8, exec: *Execution) !?DrawingContext {
+    if (self._cached) |cached| {
+        return if (std.mem.eql(u8, context_type, "2d")) cached else null;
+    }
+
     if (std.mem.eql(u8, context_type, "2d")) {
-        const ctx = try exec._factory.create(OffscreenCanvasRenderingContext2D{});
-        return .{ .@"2d" = ctx };
+        const ctx = try exec._factory.create(OffscreenCanvasRenderingContext2D{ ._canvas = self });
+        const drawing_context: DrawingContext = .{ .@"2d" = ctx };
+        self._cached = drawing_context;
+        return drawing_context;
     }
 
     return null;
 }
 
 /// Returns a Promise that resolves to a Blob containing the image.
-/// Since we have no actual rendering, this returns an empty blob.
-pub fn convertToBlob(_: *OffscreenCanvas, exec: *Execution) !js.Promise {
-    const blob = try Blob.init(null, null, exec.context.page);
+pub fn convertToBlob(self: *OffscreenCanvas, exec: *Execution) !js.Promise {
+    const png = try self._bitmap.encodePng(exec.call_arena, self._width, self._height);
+    const blob = try Blob.initFromBytes(png, "image/png", false, exec.context.page);
     return exec.context.local.?.resolvePromise(blob);
 }
 

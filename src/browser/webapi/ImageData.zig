@@ -77,10 +77,44 @@ pub fn init(
     size, overflown = @mulWithOverflow(size, 4);
     if (overflown == 1) return error.IndexSizeError;
 
+    return initWithBytes(width, height, null, maybe_settings, frame);
+}
+
+pub fn initWithBytes(
+    width: u32,
+    height: u32,
+    maybe_bytes: ?[]const u8,
+    maybe_settings: ?ConstructorSettings,
+    frame: *Frame,
+) !*ImageData {
+    // Though arguments are unsigned long, these are capped to max. i32 on Chrome.
+    const max_i32 = std.math.maxInt(i32);
+    if (width == 0 or width > max_i32 or height == 0 or height > max_i32) {
+        return error.IndexSizeError;
+    }
+
+    const settings: ConstructorSettings = maybe_settings orelse .{};
+    if (settings.colorSpace.eql(comptime .wrap("srgb")) == false) {
+        return error.TypeError;
+    }
+    if (settings.pixelFormat.eql(comptime .wrap("rgba-unorm8")) == false) {
+        return error.TypeError;
+    }
+
+    var size, var overflown = @mulWithOverflow(width, height);
+    if (overflown == 1) return error.IndexSizeError;
+    size, overflown = @mulWithOverflow(size, 4);
+    if (overflown == 1) return error.IndexSizeError;
+
+    const data = frame.js.local.?.createTypedArray(.uint8_clamped, size);
+    if (maybe_bytes) |source_bytes| {
+        @memcpy(data.bytes()[0..@min(source_bytes.len, size)], source_bytes[0..@min(source_bytes.len, size)]);
+    }
+
     return frame._factory.create(ImageData{
         ._width = width,
         ._height = height,
-        ._data = try frame.js.local.?.createTypedArray(.uint8_clamped, size).persist(),
+        ._data = try data.persist(),
     });
 }
 
@@ -90,6 +124,10 @@ pub fn getWidth(self: *const ImageData) u32 {
 
 pub fn getHeight(self: *const ImageData) u32 {
     return self._height;
+}
+
+pub fn bytes(self: *const ImageData, local: *const js.Local) []u8 {
+    return self._data.bytes(local);
 }
 
 pub fn getData(self: *const ImageData) js.ArrayBufferRef(.uint8_clamped).Global {

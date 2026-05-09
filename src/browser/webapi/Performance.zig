@@ -44,7 +44,7 @@ pub fn getTiming(self: *Performance) *PerformanceTiming {
 
 pub fn now(self: *const Performance) f64 {
     const current = highResTimestamp();
-    const elapsed = current - self._time_origin;
+    const elapsed = if (current > self._time_origin) current - self._time_origin else 0;
     // Return as milliseconds with microsecond precision
     return @as(f64, @floatFromInt(elapsed)) / 1000.0;
 }

@@ -50,6 +50,13 @@
     const blob_url_is_blob = blob_url.startsWith('blob:');
     URL.revokeObjectURL(blob_url);
 
+    // performance
+    const performance_type = typeof performance;
+    const performance_now_type = typeof performance.now;
+    const performance_time_origin_type = typeof performance.timeOrigin;
+    const performance_now_1 = performance.now();
+    const performance_now_2 = performance.now();
+
     // self.location
     const loc = self.location;
     const loc_is_worker_location = loc instanceof WorkerLocation;
@@ -84,6 +91,11 @@
         pre_aborted,
         pre_threw,
         blob_url_is_blob,
+        performance_type,
+        performance_now_type,
+        performance_time_origin_type,
+        performance_now_non_negative: performance_now_1 >= 0,
+        performance_now_monotonic: performance_now_2 >= performance_now_1,
         loc_is_worker_location,
         loc_identity_stable,
         loc_href,
