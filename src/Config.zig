@@ -27,6 +27,7 @@ const dump = @import("browser/dump.zig");
 const mcp = @import("mcp.zig");
 const Storage = @import("storage/Storage.zig");
 const WebBotAuthConfig = @import("network/WebBotAuth.zig").Config;
+const curl_impersonate_profiles = @import("curl_impersonate_profiles");
 
 const Allocator = std.mem.Allocator;
 
@@ -340,7 +341,53 @@ fn normalizeImpersonateProfile(allocator: Allocator, profile: []const u8) !?[:0]
         return null;
     }
 
+    const canonical = try canonicalizeImpersonateAlias(allocator, trimmed);
+    defer allocator.free(canonical);
+    for (curl_impersonate_profiles.aliases) |alias| {
+        if (std.mem.eql(u8, canonical, alias.alias)) {
+            return try allocator.dupeZ(u8, alias.profile);
+        }
+    }
+
     return try allocator.dupeZ(u8, trimmed);
+}
+
+fn canonicalizeImpersonateAlias(allocator: Allocator, profile: []const u8) ![]const u8 {
+    var out = try std.ArrayList(u8).initCapacity(allocator, profile.len);
+    for (profile) |c| {
+        switch (c) {
+            '-', '_' => {},
+            else => try out.append(allocator, std.ascii.toLower(c)),
+        }
+    }
+    return try out.toOwnedSlice(allocator);
+}
+
+fn expectNormalizedImpersonateProfile(input: []const u8, expected: []const u8) !void {
+    const actual = (try normalizeImpersonateProfile(std.testing.allocator, input)).?;
+    defer std.testing.allocator.free(actual);
+    try std.testing.expectEqualStrings(expected, actual);
+}
+
+test "normalizeImpersonateProfile resolves generated bare browser aliases" {
+    try expectNormalizedImpersonateProfile("chrome", "chrome146");
+    try expectNormalizedImpersonateProfile("firefox", "firefox147");
+    try expectNormalizedImpersonateProfile("safari", "safari2601");
+}
+
+test "normalizeImpersonateProfile resolves Safari major and mobile aliases" {
+    try expectNormalizedImpersonateProfile("safari26", "safari2601");
+    try expectNormalizedImpersonateProfile("safari18", "safari184");
+    try expectNormalizedImpersonateProfile("safari-ios", "safari260_ios");
+    try expectNormalizedImpersonateProfile("safari_ios26", "safari260_ios");
+    try expectNormalizedImpersonateProfile("safari26_ios", "safari260_ios");
+}
+
+test "normalizeImpersonateProfile treats hyphen and underscore aliases equivalently" {
+    try expectNormalizedImpersonateProfile("safari-ios26", "safari260_ios");
+    try expectNormalizedImpersonateProfile("safari_ios26", "safari260_ios");
+    try expectNormalizedImpersonateProfile("chrome-android", "chrome131_android");
+    try expectNormalizedImpersonateProfile("chrome_mobile", "chrome131_android");
 }
 
 pub fn httpCacheDir(self: *const Config) ?[]const u8 {

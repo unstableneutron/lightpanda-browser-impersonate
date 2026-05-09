@@ -24,6 +24,19 @@ const min_zig_version = std.SemanticVersion.parse(@import("build.zig.zon").minim
 const curl_impersonate_release_tag = "v1.5.6-lightpanda.wsstartframe.1";
 const curl_impersonate_version_metadata = "curl-impersonate-" ++ curl_impersonate_release_tag;
 
+const ImpersonateProfile = struct {
+    name: []const u8,
+    family: []const u8,
+    platform: ?[]const u8,
+    version: u32,
+    safari_major: ?u32,
+};
+
+const ImpersonateAlias = struct {
+    alias: []const u8,
+    profile: []const u8,
+};
+
 const Build = blk: {
     if (builtin.zig_version.order(min_zig_version) == .lt) {
         const message = std.fmt.comptimePrint(
@@ -54,6 +67,8 @@ pub fn build(b: *Build) !void {
     const version_string = b.fmt("{f}", .{version});
     const version_encoded = std.mem.replaceOwned(u8, b.allocator, version_string, "+", "%2B") catch @panic("OOM");
 
+    const curl_impersonate_profiles = generateCurlImpersonateProfilesModule(b);
+
     var opts = b.addOptions();
     opts.addOption([]const u8, "version", version_string);
     opts.addOption([]const u8, "version_encoded", version_encoded);
@@ -77,6 +92,7 @@ pub fn build(b: *Build) !void {
         });
         mod.addImport("lightpanda", mod); // allow circular "lightpanda" import
         mod.addImport("build_config", opts.createModule());
+        mod.addImport("curl_impersonate_profiles", curl_impersonate_profiles);
 
         // Format check
         const fmt_step = b.step("fmt", "Check code formatting");
@@ -331,6 +347,203 @@ fn linkSqlite(b: *Build, mod: *Build.Module, enable_csan: ?std.zig.SanitizeC, is
     }
 
     mod.linkLibrary(lib);
+}
+
+fn generateCurlImpersonateProfilesModule(b: *Build) *Build.Module {
+    const impersonate = b.dependency("curl_impersonate", .{});
+    const bin_lazy = impersonate.path("bin");
+    const bin_path = bin_lazy.getPath3(b, null);
+
+    var bin = bin_path.root_dir.handle.openDir(bin_path.sub_path, .{ .iterate = true }) catch |e| {
+        std.debug.panic("openDir curl-impersonate bin: {s}", .{@errorName(e)});
+    };
+    defer bin.close();
+
+    var profiles: std.ArrayList(ImpersonateProfile) = .empty;
+    var it = bin.iterate();
+    while (it.next() catch |e| std.debug.panic("iterate curl-impersonate bin: {s}", .{@errorName(e)})) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.startsWith(u8, entry.name, "curl_")) continue;
+        const name = entry.name["curl_".len..];
+        const profile = parseImpersonateProfile(b, name) orelse continue;
+        profiles.append(b.allocator, profile) catch @panic("OOM");
+    }
+
+    var aliases: std.ArrayList(ImpersonateAlias) = .empty;
+    addLatestDesktopAlias(b, profiles.items, &aliases, "chrome");
+    addLatestDesktopAlias(b, profiles.items, &aliases, "firefox");
+    addLatestDesktopAlias(b, profiles.items, &aliases, "safari");
+    addLatestDesktopAlias(b, profiles.items, &aliases, "edge");
+    addLatestDesktopAlias(b, profiles.items, &aliases, "tor");
+    if (bestProfile(profiles.items, "chrome", null, null)) |chrome| {
+        addOrReplaceAlias(b, &aliases, "brave", chrome.name);
+    }
+    addSafariMajorAliases(b, profiles.items, &aliases, null);
+    addSafariMajorAliases(b, profiles.items, &aliases, "ios");
+    addMobileAliases(b, profiles.items, &aliases, "safari", "ios");
+    addMobileAliases(b, profiles.items, &aliases, "chrome", "android");
+
+    const source = renderImpersonateAliases(b, aliases.items);
+    const generated = b.addWriteFiles().add("curl_impersonate_profiles.zig", source);
+    return b.createModule(.{ .root_source_file = generated });
+}
+
+fn parseImpersonateProfile(b: *Build, raw_name: []const u8) ?ImpersonateProfile {
+    const name = b.allocator.dupe(u8, raw_name) catch @panic("OOM");
+    var digit_start: ?usize = null;
+    for (name, 0..) |c, i| {
+        if (std.ascii.isDigit(c)) {
+            digit_start = i;
+            break;
+        }
+    }
+    const start = digit_start orelse return null;
+    var digit_end = start;
+    while (digit_end < name.len and std.ascii.isDigit(name[digit_end])) : (digit_end += 1) {}
+    const version = std.fmt.parseInt(u32, name[start..digit_end], 10) catch return null;
+    const family = name[0..start];
+    const suffix = name[digit_end..];
+    const platform: ?[]const u8 = if (std.mem.eql(u8, suffix, "_ios"))
+        "ios"
+    else if (std.mem.eql(u8, suffix, "_android"))
+        "android"
+    else
+        null;
+    const safari_major: ?u32 = if (std.mem.eql(u8, family, "safari") and digit_end >= start + 2)
+        std.fmt.parseInt(u32, name[start .. start + 2], 10) catch null
+    else
+        null;
+    return .{
+        .name = name,
+        .family = family,
+        .platform = platform,
+        .version = version,
+        .safari_major = safari_major,
+    };
+}
+
+fn bestProfile(
+    profiles: []const ImpersonateProfile,
+    family: []const u8,
+    platform: ?[]const u8,
+    safari_major: ?u32,
+) ?ImpersonateProfile {
+    var best: ?ImpersonateProfile = null;
+    for (profiles) |profile| {
+        if (!std.mem.eql(u8, profile.family, family)) continue;
+        if (platform) |p| {
+            if (profile.platform == null or !std.mem.eql(u8, profile.platform.?, p)) continue;
+        } else if (profile.platform != null) continue;
+        if (safari_major) |major| {
+            if (profile.safari_major == null or profile.safari_major.? != major) continue;
+        }
+        if (best == null or profile.version > best.?.version) best = profile;
+    }
+    return best;
+}
+
+fn addLatestDesktopAlias(
+    b: *Build,
+    profiles: []const ImpersonateProfile,
+    aliases: *std.ArrayList(ImpersonateAlias),
+    family: []const u8,
+) void {
+    if (bestProfile(profiles, family, null, null)) |profile| {
+        addOrReplaceAlias(b, aliases, family, profile.name);
+    }
+}
+
+fn addSafariMajorAliases(
+    b: *Build,
+    profiles: []const ImpersonateProfile,
+    aliases: *std.ArrayList(ImpersonateAlias),
+    platform: ?[]const u8,
+) void {
+    for (profiles) |profile| {
+        if (!std.mem.eql(u8, profile.family, "safari")) continue;
+        if (profile.safari_major == null) continue;
+        if (platform) |p| {
+            if (profile.platform == null or !std.mem.eql(u8, profile.platform.?, p)) continue;
+        } else if (profile.platform != null) continue;
+        const latest = bestProfile(profiles, "safari", platform, profile.safari_major).?;
+        const major = profile.safari_major.?;
+        if (platform) |p| {
+            addOrReplaceAlias(b, aliases, b.fmt("safari{s}{d}", .{ p, major }), latest.name);
+            addOrReplaceAlias(b, aliases, b.fmt("safari{d}{s}", .{ major, p }), latest.name);
+        } else {
+            addOrReplaceAlias(b, aliases, b.fmt("safari{d}", .{major}), latest.name);
+        }
+    }
+}
+
+fn addMobileAliases(
+    b: *Build,
+    profiles: []const ImpersonateProfile,
+    aliases: *std.ArrayList(ImpersonateAlias),
+    family: []const u8,
+    platform: []const u8,
+) void {
+    const latest = bestProfile(profiles, family, platform, null) orelse return;
+    addOrReplaceAlias(b, aliases, b.fmt("{s}{s}", .{ family, platform }), latest.name);
+    addOrReplaceAlias(b, aliases, b.fmt("{s}mobile", .{family}), latest.name);
+    for (profiles) |profile| {
+        if (!std.mem.eql(u8, profile.family, family)) continue;
+        if (profile.platform == null or !std.mem.eql(u8, profile.platform.?, platform)) continue;
+        if (std.mem.eql(u8, family, "safari")) continue;
+        addOrReplaceAlias(b, aliases, b.fmt("{s}{s}{d}", .{ family, platform, profile.version }), profile.name);
+        addOrReplaceAlias(b, aliases, b.fmt("{s}{d}{s}", .{ family, profile.version, platform }), profile.name);
+    }
+}
+
+fn addOrReplaceAlias(
+    b: *Build,
+    aliases: *std.ArrayList(ImpersonateAlias),
+    alias: []const u8,
+    profile: []const u8,
+) void {
+    const canonical = canonicalImpersonateAlias(b, alias);
+    for (aliases.items) |*item| {
+        if (std.mem.eql(u8, item.alias, canonical)) {
+            item.profile = profile;
+            return;
+        }
+    }
+    aliases.append(b.allocator, .{ .alias = canonical, .profile = profile }) catch @panic("OOM");
+}
+
+fn canonicalImpersonateAlias(b: *Build, alias: []const u8) []const u8 {
+    var out = std.ArrayList(u8).initCapacity(b.allocator, alias.len) catch @panic("OOM");
+    for (alias) |c| {
+        switch (c) {
+            '-', '_' => {},
+            else => out.append(b.allocator, std.ascii.toLower(c)) catch @panic("OOM"),
+        }
+    }
+    return out.toOwnedSlice(b.allocator) catch @panic("OOM");
+}
+
+fn lessImpersonateAlias(_: void, a: ImpersonateAlias, b: ImpersonateAlias) bool {
+    return std.mem.lessThan(u8, a.alias, b.alias);
+}
+
+fn renderImpersonateAliases(b: *Build, aliases: []ImpersonateAlias) []const u8 {
+    std.mem.sort(ImpersonateAlias, aliases, {}, lessImpersonateAlias);
+    var source: std.ArrayList(u8) = .empty;
+    const w = source.writer(b.allocator);
+    w.print(
+        \\pub const Alias = struct {{
+        \\    alias: []const u8,
+        \\    profile: [:0]const u8,
+        \\}};
+        \\
+        \\pub const aliases = [_]Alias{{
+        \\
+    , .{}) catch @panic("OOM");
+    for (aliases) |item| {
+        w.print("    .{{ .alias = \"{s}\", .profile = \"{s}\" }},\n", .{ item.alias, item.profile }) catch @panic("OOM");
+    }
+    w.print("}};\n", .{}) catch @panic("OOM");
+    return source.toOwnedSlice(b.allocator) catch @panic("OOM");
 }
 
 fn linkCurl(b: *Build, mod: *Build.Module, is_tsan: bool) !void {
