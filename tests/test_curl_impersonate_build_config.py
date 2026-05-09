@@ -52,6 +52,9 @@ def test_release_workflow_uses_available_static_release_runners() -> None:
 
     assert "ubuntu-24.04" in release
     assert "ubuntu-24.04-arm" in release
+    assert "target_flag: -Dtarget=x86_64-linux-gnu" in release
+    assert "target_flag: -Dtarget=aarch64-linux-gnu" in release
+    assert "${{ matrix.target_flag }} ${{ matrix.cpu_flag }}" in release
     assert "ubuntu-22.04" not in release
     assert "ubuntu-22.04-arm" not in release
     assert "macos-15" in release

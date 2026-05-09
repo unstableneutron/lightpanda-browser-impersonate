@@ -31,9 +31,11 @@ jobs:
         include:
           - arch: x86_64
             runner: ubuntu-24.04
+            target_flag: -Dtarget=x86_64-linux-gnu
             cpu_flag: -Dcpu=x86_64
           - arch: aarch64
             runner: ubuntu-24.04-arm
+            target_flag: -Dtarget=aarch64-linux-gnu
             cpu_flag: -Dcpu=generic
 
     env:
@@ -58,7 +60,7 @@ jobs:
         run: zig build ${{ env.CURL_IMPERSONATE_FLAG }} -Dprebuilt_v8_path=v8/libc_v8.a -Doptimize=ReleaseFast snapshot_creator -- src/snapshot.bin
 
       - name: zig build static curl-impersonate binary
-        run: zig build ${{ env.CURL_IMPERSONATE_FLAG }} -Dsnapshot_path=../../snapshot.bin -Dprebuilt_v8_path=v8/libc_v8.a -Doptimize=ReleaseFast ${{ matrix.cpu_flag }} ${{ env.VERSION_FLAG }}
+        run: zig build ${{ env.CURL_IMPERSONATE_FLAG }} -Dsnapshot_path=../../snapshot.bin -Dprebuilt_v8_path=v8/libc_v8.a -Doptimize=ReleaseFast ${{ matrix.target_flag }} ${{ matrix.cpu_flag }} ${{ env.VERSION_FLAG }}
 
       - name: Rename binary
         run: mv zig-out/bin/lightpanda lightpanda-${{ env.ARCH }}-${{ env.OS }}
